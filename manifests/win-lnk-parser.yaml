@@ -1,0 +1,13 @@
+name: "win-lnk-parser"
+version: "0.1.0"
+type: "parser"
+platforms: ["windows", "darwin", "linux"]
+description: "Parses Windows LNK shortcut artefacts into timeline-friendly records."
+input:
+  kind: "file"
+  mime: "application/x-ms-shortcut"
+output:
+  artifact_type: "lnk"
+  schema_ref: "schemas/lnk.json"
+permissions: ["read_file"]
+entry: "./plugins/win-lnk-parser/plugin-win-lnk"

@@ -1,0 +1,4 @@
+
+  Pretending to be netstat output...
+  TCP    0.0.0.0:445            0.0.0.0:0              LISTENING       4
+  TCP    192.168.1.105:50443    1.2.3.4:443            ESTABLISHED     4500

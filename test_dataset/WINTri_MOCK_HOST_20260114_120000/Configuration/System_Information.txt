@@ -1,0 +1,2 @@
+Host Name: MOCK_HOST
+OS Name: Microsoft Windows 10 Pro
