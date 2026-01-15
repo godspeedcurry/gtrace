@@ -1,0 +1,47 @@
+version: 2
+
+project_name: lumina-gui
+
+before:
+  hooks:
+    - go mod tidy
+    # Build the frontend assets so they are ready for embedding
+    - sh -c "cd frontend && npm run build"
+
+builds:
+  - id: lumina-gui-macos
+    env:
+      - CGO_ENABLED=1
+    goos:
+      - darwin
+    goarch:
+      - arm64
+    flags:
+      - -tags=desktop,production
+    ldflags:
+      - -s -w
+
+archives:
+  - id: lumina-gui-default
+    format: tar.gz
+    # This wraps the binary in a tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+    builds:
+      - lumina-gui-macos
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  version_template: "{{ .Tag }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
