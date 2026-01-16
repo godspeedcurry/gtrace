@@ -33,7 +33,7 @@ jobs:
       - name: Install Frontend Dependencies
         run: |
           cd frontend
-          npm install
+          npm ci
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6

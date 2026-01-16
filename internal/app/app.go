@@ -36,22 +36,38 @@ func (a *App) Startup(ctx context.Context) {
 	a.ctx = ctx
 }
 
+// Shutdown is called at application termination
+func (a *App) Shutdown(ctx context.Context) {
+	if a.store != nil {
+		// Clean up the data directory to ensure no sensitive data is left behind
+		// The user requested that the Case Output Path files be cleared on exit.
+		// We only remove the 'data' subdirectory to be safe and avoid deleting user directories if misconfigured.
+		dataDir := filepath.Join(a.store.CasePath(), "data")
+		a.log("Shutdown: Cleaning up data directory %s", dataDir)
+		if err := os.RemoveAll(dataDir); err != nil {
+			a.log("Error cleaning up data directory: %s", err)
+		} else {
+			a.log("Data directory cleaned up successfully.")
+		}
+	}
+}
+
 // GetDefaultCasePath returns a sensible default path for the current OS.
 func (a *App) GetDefaultCasePath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return filepath.Join(os.TempDir(), "lumina_case")
+		return filepath.Join(os.TempDir(), "gtrace_case")
 	}
 
 	switch runtime.GOOS {
 	case "windows":
 		// On Windows, use Documents/LuminaCase or Temp
 		// Using Temp for now to match behavior but Home is better for persistence
-		return filepath.Join(os.TempDir(), "lumina_case")
+		return filepath.Join(os.TempDir(), "gtrace_case")
 	default:
 		// On *nix, use /tmp/lumina_case for now
 		// Actually let's use home dir if available to be nice
-		return filepath.Join(home, ".lumina_case")
+		return filepath.Join(home, ".gtrace_case")
 	}
 }
 
@@ -132,8 +148,8 @@ func (a *App) StartTriage(evidencePath string, components []string, options map[
 		return a.pipeline.TriageLive(a.ctx, components, options, progressFunc)
 	}
 
-	a.log("Starting Triage on %s", evidencePath)
-	return a.pipeline.Triage(a.ctx, evidencePath, progressFunc)
+	a.log("Starting Triage on %s with options: %v", evidencePath, options)
+	return a.pipeline.Triage(a.ctx, evidencePath, options, progressFunc)
 }
 
 // RunAnalysis executes analyzers.
@@ -166,6 +182,32 @@ func (a *App) GetTimeline(limit int) ([]model.TimelineEvent, error) {
 		events = []model.TimelineEvent{}
 	}
 	return events, err
+}
+
+// SearchEvents returns a page of timeline events matching the criteria (Loki-Mode).
+func (a *App) SearchEvents(query string, page int, pageSize int, source string) ([]model.TimelineEvent, error) {
+	if a.store == nil {
+		return nil, fmt.Errorf("case not open")
+	}
+
+	if source == "all" {
+		source = ""
+	}
+
+	return a.store.SearchTimeline(a.ctx, &model.TimelineFilter{
+		SearchTerm: query,
+		Page:       page,
+		PageSize:   pageSize,
+		Source:     source,
+	})
+}
+
+// GetTotalEventCount returns the number of events in storage
+func (a *App) GetTotalEventCount() (int, error) {
+	if a.store == nil {
+		return 0, nil
+	}
+	return a.store.CountTimelineEvents(a.ctx)
 }
 
 // GetFindings returns findings for the dashboard.

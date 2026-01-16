@@ -6,10 +6,13 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"gtrace/internal/analysis"
+	"gtrace/internal/rules"
 	"gtrace/internal/storage"
 	"gtrace/pkg/model"
 	"gtrace/pkg/pluginsdk"
@@ -62,8 +65,8 @@ func (p *Pipeline) log(format string, args ...interface{}) {
 }
 
 // Triage walks evidencePath and runs matching parsers against found files concurrently.
-func (p *Pipeline) Triage(ctx context.Context, evidencePath string, progressCb func(current, total int)) error {
-	p.log("Starting Triage on specific path: %s", evidencePath)
+func (p *Pipeline) Triage(ctx context.Context, evidencePath string, options map[string]interface{}, progressCb func(current, total int)) error {
+	p.log("Starting Triage on specific path: %s, Options: %v", evidencePath, options)
 	if evidencePath == "" {
 		return fmt.Errorf("evidence path required")
 	}
@@ -97,7 +100,7 @@ func (p *Pipeline) Triage(ctx context.Context, evidencePath string, progressCb f
 	}
 
 	p.log("Found %d candidate files", len(candidates))
-	return p.runTriage(ctx, candidates, nil, progressCb)
+	return p.runTriage(ctx, candidates, options, progressCb)
 }
 
 // TriageLive automatically finds and processes known artifacts from the live system.
@@ -212,9 +215,84 @@ func (p *Pipeline) runTriage(ctx context.Context, candidates []string, options m
 		progressCb(0, total)
 	}
 
+	// Channels
+	// We separate Events stream from logical File result
 	responseChan := make(chan *pluginsdk.ParseResponse, total)
+	eventsChan := make(chan model.TimelineEvent, 5000) // Buffer for bursty events
+
 	numWorkers := 4
 	jobs := make(chan string, total)
+
+	// Stream Writer
+	// We need to coordinate writing. Since we have multiple parsers running,
+	// checking if writer is ready is needed.
+	// Actually, we can start the writer immediately.
+	writeErrChan := make(chan error, 1)
+
+	// Global Max Events Limit
+	globalMaxEvents := 100000 // Default
+	if options != nil {
+		if val, ok := options["max_events"]; ok {
+			if v, err := strconv.Atoi(fmt.Sprintf("%v", val)); err == nil && v > 0 {
+				globalMaxEvents = v
+			}
+		}
+	}
+	p.log("Pipeline: Global MaxEvents Limit = %d", globalMaxEvents)
+
+	// Initialize Sigma Engine
+	sigmaEng, err := analysis.NewEngineV2(rules.WindowsRules, "sigma_rules_repo/rules/windows")
+	if err != nil {
+		p.log("Pipeline: Failed to initialize Sigma Engine: %v", err)
+	} else {
+		p.log("Pipeline: Sigma Engine V2 initialized with %d rules", len(sigmaEng.Rules))
+	}
+
+	go func() {
+		defer close(writeErrChan)
+
+		// Create efficient buffered writer for timeline
+		writeEvent, closeEvents, err := p.store.NewStreamWriter("timeline.jsonl")
+		if err != nil {
+			writeErrChan <- err
+			// Drain eventsChan to prevent deadlock
+			for range eventsChan {
+			}
+			return
+		}
+		defer closeEvents()
+
+		// Loop with global limit
+		writtenCount := 0
+		for ev := range eventsChan {
+			if writtenCount >= globalMaxEvents {
+				// Drain remaining events without writing
+				continue
+			}
+
+			// Run Sigma Checks (if engine loaded)
+			if sigmaEng != nil {
+				if matched := sigmaEng.Evaluate(ev); matched != nil {
+					// Mark the event
+					ev.Details["_Alert"] = matched.Rule.Title
+					ev.Details["_AlertLevel"] = matched.Rule.Level
+					ev.Details["_AlertRuleID"] = matched.Rule.ID
+					// Add MITRE ATT&CK tags if available
+					if len(matched.Rule.Tags) > 0 {
+						ev.Details["_Mitre"] = matched.Rule.Tags[0]
+					}
+				}
+			}
+
+			if err := writeEvent(ev); err != nil {
+				p.log("Error writing event: %v", err)
+				// continue best effort
+			}
+			writtenCount++
+		}
+		p.log("Pipeline: Total events written = %d (limit was %d)", writtenCount, globalMaxEvents)
+		writeErrChan <- nil
+	}()
 
 	var wg sync.WaitGroup
 	for w := 0; w < numWorkers; w++ {
@@ -231,12 +309,17 @@ func (p *Pipeline) runTriage(ctx context.Context, candidates []string, options m
 							p.log("[W%d] PANIC: %v", workerID, err)
 						}
 					}()
-					// p.log("[W%d] Processing %s", workerID, file) // Verbose!
-					resp, err = p.processFile(ctx, file, options)
+
+					// Define stream callback
+					streamCb := func(ev model.TimelineEvent) {
+						eventsChan <- ev
+					}
+
+					resp, err = p.processFile(ctx, file, options, streamCb)
 				}()
 
 				if err == nil && resp != nil {
-					p.log("[W%d] SUCCESS %s (Events: %d)", workerID, file, len(resp.Events))
+					p.log("[W%d] SUCCESS %s", workerID, file)
 					responseChan <- resp
 				} else {
 					if err != nil {
@@ -248,52 +331,37 @@ func (p *Pipeline) runTriage(ctx context.Context, candidates []string, options m
 		}(w)
 	}
 
-	// Collector / Writer Goroutine
-	writeDone := make(chan error)
+	// Artifact Saver (Keep legacy logic for Artifacts/Findings which are small)
+	doneArtifacts := make(chan struct{})
 	go func() {
-		defer close(writeDone)
-		var eventBatch []model.TimelineEvent
 		var artifactBatch []model.Artifact
 		processed := 0
-
-		flush := func() error {
-			if len(eventBatch) > 0 {
-				if err := p.store.SaveTimeline(ctx, eventBatch); err != nil {
-					return err
-				}
-				eventBatch = eventBatch[:0]
-			}
-			if len(artifactBatch) > 0 {
-				if err := p.store.SaveArtifacts(ctx, artifactBatch); err != nil {
-					return err
-				}
-				artifactBatch = artifactBatch[:0]
-			}
-			return nil
-		}
 
 		for resp := range responseChan {
 			processed++
 			if resp != nil {
-				if len(resp.Events) > 0 {
-					eventBatch = append(eventBatch, resp.Events...)
-				}
+				// Events are already handled via streamCb!
+				// Only handle artifacts here
 				if len(resp.Artifacts) > 0 {
 					artifactBatch = append(artifactBatch, resp.Artifacts...)
 				}
 			}
-			// Batch flush condition
-			if len(eventBatch) >= 1000 || len(artifactBatch) >= 100 {
-				if err := flush(); err != nil {
-					p.log("Flush error: %v", err)
+
+			if len(artifactBatch) >= 100 {
+				if err := p.store.SaveArtifacts(ctx, artifactBatch); err != nil {
+					p.log("Artifact save error: %v", err)
 				}
+				artifactBatch = artifactBatch[:0]
 			}
-			// UI update
+
 			if progressCb != nil && (processed%5 == 0 || processed == total) {
 				progressCb(processed, total)
 			}
 		}
-		flush()
+		if len(artifactBatch) > 0 {
+			p.store.SaveArtifacts(ctx, artifactBatch)
+		}
+		close(doneArtifacts)
 	}()
 
 	for _, file := range candidates {
@@ -302,12 +370,18 @@ func (p *Pipeline) runTriage(ctx context.Context, candidates []string, options m
 	close(jobs)
 	wg.Wait()
 	close(responseChan)
-	<-writeDone
+	close(eventsChan) // Signals writer to finish
+
+	<-doneArtifacts
+	if err := <-writeErrChan; err != nil {
+		return err
+	}
+
 	return nil
 }
 
 // processFile handles a single file: identification, parsing.
-func (p *Pipeline) processFile(ctx context.Context, file string, options map[string]interface{}) (*pluginsdk.ParseResponse, error) {
+func (p *Pipeline) processFile(ctx context.Context, file string, options map[string]interface{}, streamCb func(model.TimelineEvent)) (*pluginsdk.ParseResponse, error) {
 	var targetFile string
 	var tempFile string
 
@@ -381,20 +455,53 @@ func (p *Pipeline) processFile(ctx context.Context, file string, options map[str
 		}
 	}
 
+	// Wrap callback to fixup source paths if needed
+	var wrappedCb func(model.TimelineEvent)
+	if streamCb != nil {
+		wrappedCb = func(ev model.TimelineEvent) {
+			if tempFile != "" {
+				ev.EvidenceRef.SourcePath = file
+				if ev.Source == "File" { // Default source? Registry usually sets "Registry"
+					ev.Source = "Registry"
+				}
+			}
+			streamCb(ev)
+		}
+	}
+
 	resp, err := parser.Parse(ctx, pluginsdk.ParseRequest{
-		EvidencePath: targetFile,
-		Metadata:     meta,
+		EvidencePath:   targetFile,
+		Metadata:       meta,
+		StreamCallback: wrappedCb,
+		ProgressCallback: func(percent int) {
+			// We can emit app events here if we have context?
+			// But processFile is deep inside.
+			// We can log for now, or find a way to emit "triage:progress" fine-grained.
+			// Current architecture progressCb handles TOTAL files (1/N).
+			// We can emit a specific "parsing_progress" event?
+			// Or we just update the log?
+			// Let's rely on EventEmit via a new mechanism if possible, but App struct holds the context.
+			// Pipeline struct holds a logger.
+			// Let's log it for debug first.
+			p.log("[PARSER] %s Progress: %d%%", filepath.Base(file), percent)
+		},
 	})
 	if err != nil {
 		return nil, err
 	}
 
 	// Fixup Source in events to point into original file if we used a temp file
-	if tempFile != "" {
+	// Only if not streamed (legacy plugins)
+	if tempFile != "" && resp != nil && len(resp.Events) > 0 {
 		for i := range resp.Events {
-			resp.Events[i].Source = "REGISTRY" // Generic tag or specific?
+			resp.Events[i].Source = "Registry" // Generic tag or specific?
 		}
 		// Fix Artifacts
+		for i := range resp.Artifacts {
+			resp.Artifacts[i].EvidenceRef.SourcePath = file
+		}
+	} else if tempFile != "" && resp != nil && len(resp.Artifacts) > 0 {
+		// Even if events streamed, artifacts are returned in resp
 		for i := range resp.Artifacts {
 			resp.Artifacts[i].EvidenceRef.SourcePath = file
 		}

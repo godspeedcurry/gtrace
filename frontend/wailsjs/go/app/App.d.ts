@@ -8,6 +8,8 @@ export function GetFindings():Promise<Array<model.Finding>>;
 
 export function GetTimeline(arg1:number):Promise<Array<model.TimelineEvent>>;
 
+export function GetTotalEventCount():Promise<number>;
+
 export function Greet(arg1:string):Promise<string>;
 
 export function Log(arg1:string,arg2:string,arg3:Array<any>):Promise<void>;
@@ -17,5 +19,7 @@ export function OpenCase(arg1:string):Promise<void>;
 export function ResetCase():Promise<void>;
 
 export function RunAnalysis():Promise<number>;
+
+export function SearchEvents(arg1:string,arg2:number,arg3:number,arg4:string):Promise<Array<model.TimelineEvent>>;
 
 export function StartTriage(arg1:string,arg2:Array<string>,arg3:Record<string, any>):Promise<void>;

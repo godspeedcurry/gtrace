@@ -19,7 +19,7 @@ func main() {
 
 	// Create application with options
 	err := wails.Run(&options.App{
-		Title:  "Lumina DFIR",
+		Title:  "GTrace DFIR",
 		Width:  1280,
 		Height: 800,
 		AssetServer: &assetserver.Options{
@@ -27,6 +27,7 @@ func main() {
 		},
 		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
 		OnStartup:        a.Startup,
+		OnShutdown:       a.Shutdown,
 		Bind: []interface{}{
 			a,
 		},

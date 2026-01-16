@@ -14,6 +14,10 @@ export function GetTimeline(arg1) {
   return window['go']['app']['App']['GetTimeline'](arg1);
 }
 
+export function GetTotalEventCount() {
+  return window['go']['app']['App']['GetTotalEventCount']();
+}
+
 export function Greet(arg1) {
   return window['go']['app']['App']['Greet'](arg1);
 }
@@ -32,6 +36,10 @@ export function ResetCase() {
 
 export function RunAnalysis() {
   return window['go']['app']['App']['RunAnalysis']();
+}
+
+export function SearchEvents(arg1, arg2, arg3, arg4) {
+  return window['go']['app']['App']['SearchEvents'](arg1, arg2, arg3, arg4);
 }
 
 export function StartTriage(arg1, arg2, arg3) {

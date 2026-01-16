@@ -71,4 +71,10 @@ type TimelineFilter struct {
 	TimeStart  *time.Time
 	TimeEnd    *time.Time
 	MaxResults int
+
+	// Pagination & Search
+	SearchTerm string
+	Page       int
+	PageSize   int
+	Source     string
 }

@@ -1,163 +1,169 @@
 <script>
     import { timeline, selectedEvent } from '../stores.js';
-    
+    import { onMount, onDestroy } from 'svelte';
+    import { GetTotalEventCount, SearchEvents } from '../../wailsjs/go/app/App.js';
+
     let searchTerm = "";
     let filterSource = "all";
+    let totalStorageCount = 0;
     
-    // Sorting
+    // Pagination
+    let currentPage = 1;
+    let pageSize = 100;
+    let hasNextPage = true;
     let sortField = "event_time";
-    let sortDirection = "desc"; // or 'asc'
+    let sortDirection = "desc";
 
-    function toggleSort(field) {
-        if (sortField === field) {
-            sortDirection = sortDirection === "asc" ? "desc" : "asc";
-        } else {
-            sortField = field;
-            sortDirection = "desc"; // Default new sort to desc
+    let lastError = "";
+
+    async function loadData() {
+        try {
+            lastError = "";
+            totalStorageCount = await GetTotalEventCount();
+            await fetchPage();
+        } catch(e) {
+            console.error("Load Error:", e);
+            lastError = "Failed to load data: " + e;
         }
     }
 
-    $: filteredTimeline = $timeline.filter(e => {
-        if (filterSource !== 'all' && e.source !== filterSource) return false;
-        if (!searchTerm) return true;
-        const term = searchTerm.toLowerCase();
-        
-        // Safety checks for null fields
-        const time = e.event_time || "";
-        const source = e.source || "";
-        const action = e.action || "";
-        const subject = e.subject || "";
-        
-        return (
-            time.toLowerCase().includes(term) ||
-            source.toLowerCase().includes(term) ||
-            action.toLowerCase().includes(term) ||
-            subject.toLowerCase().includes(term)
-        );
-    }).sort((a, b) => {
-        let valA = a[sortField] || "";
-        let valB = b[sortField] || "";
-        
-        // Special case for time? ISO strings sort correctly as strings.
-        
-        if (valA < valB) return sortDirection === "asc" ? -1 : 1;
-        if (valA > valB) return sortDirection === "asc" ? 1 : -1;
-        return 0;
+    onMount(async () => {
+        loadData();
     });
-
-    $: sources = ['all', ...new Set($timeline.map(e => e.source))];
     
-    // Column Resizing Logic
-    let columnWidths = {
-        time: 180,
-        source: 120,
-        action: 200,
-        subject: 250
-    };
+    async function fetchPage() {
+        try {
+            const events = await SearchEvents(searchTerm, currentPage, pageSize, filterSource);
+            $timeline = events || [];
+            hasNextPage = ($timeline.length === pageSize);
+            lastError = "";
+        } catch (e) {
+            console.error("Search Error:", e);
+            lastError = "Search failed: " + e;
+            $timeline = [];
+        }
+    }
     
-    let resizingCol = null;
-    let startX = 0;
-    let startWidth = 0;
-
-    function startResize(e, col) {
-        resizingCol = col;
-        startX = e.clientX;
-        startWidth = columnWidths[col];
-        window.addEventListener('mousemove', doResize);
-        window.addEventListener('mouseup', stopResize);
-        e.target.classList.add('active');
+    // Reactivity
+    // Debounce search? For now simple reactive
+    let timeout;
+    function debounceLoad() {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => {
+            currentPage = 1; // Reset to page 1 on filter change
+            fetchPage();
+        }, 300);
+    }
+    
+    $: if (searchTerm !== undefined) debounceLoad();
+    $: if (filterSource) { currentPage = 1; fetchPage(); }
+    $: if (pageSize) { currentPage = 1; fetchPage(); }
+    
+    // Note: sorting is now implicit (Time Desc) from backend. 
+    // Client side sort of the PAGE is still possible if desired, but let's keep it simple.
+    // If user clicks sort headers, we could re-sort the current page?
+    // Or ask backend? Backend only supports Time Desc (Loki mode).
+    // Let's effectively disable sorting for now or only sort the view page.
+    
+    function toggleSort(field) {
+        // Only sort the current page in memory
+        sortField = field;
+        sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+        $timeline = $timeline.sort((a, b) => {
+             let valA = a[field] || "";
+             let valB = b[field] || "";
+             if (field === 'event_time') {
+                 // Date comparison
+                 return sortDirection === 'asc' ? 
+                    new Date(valA) - new Date(valB) :
+                    new Date(valB) - new Date(valA);
+             }
+             if (valA < valB) return sortDirection === 'asc' ? -1 : 1;
+             if (valA > valB) return sortDirection === 'asc' ? 1 : -1;
+             return 0;
+        });
     }
 
-    function doResize(e) {
-        if (!resizingCol) return;
-        const diff = e.clientX - startX;
-        // Min width 50px
-        columnWidths[resizingCol] = Math.max(50, startWidth + diff);
-    }
-
-    function stopResize() {
-        resizingCol = null;
-        window.removeEventListener('mousemove', doResize);
-        window.removeEventListener('mouseup', stopResize);
-        document.querySelectorAll('.resizer').forEach(el => el.classList.remove('active'));
-    }
-
-    import { onDestroy } from 'svelte';
-    onDestroy(() => {
-        window.removeEventListener('mousemove', doResize);
-        window.removeEventListener('mouseup', stopResize);
-    });
+    onMount(loadData);
 
     // --- SMART SCHEMA DEFINITIONS ---
     const eventSchemas = {
-        // Process Creation
-        '4688': [
-            { k: 'NewProcessName', label: 'Proc' },
-            { k: 'CommandLine', label: 'Cmd' },
-            { k: 'ParentProcessName', label: 'Parent' }
-        ],
-        // Logon
-        '4624': [
-            { k: 'TargetUserName', label: 'User' },
-            { k: 'LogonType', label: 'Type' },
-            { k: 'IpAddress', label: 'IP' }
-        ],
-        '4625': [
-            { k: 'TargetUserName', label: 'User' },
-            { k: 'FailureReason', label: 'Reason' },
-            { k: 'IpAddress', label: 'IP' }
-        ],
-        // Special Logons
-        '4672': [{ k: 'SubjectUserName', label: 'AdminUser' }],
-        // Kerberos
-        '4768': [{ k: 'TargetUserName', label: 'User' }, { k: 'TicketEncryptionType', label: 'Enc' }],
-        '4769': [{ k: 'TargetUserName', label: 'User' }, { k: 'ServiceName', label: 'Svc' }],
-        // Object Access
-        '4663': [{ k: 'ObjectName', label: 'Obj' }, { k: 'AccessMask', label: 'Mask' }, { k: 'ProcessName', label: 'Proc' }],
-        // Scheduled Tasks
-        '4698': [{ k: 'TaskName', label: 'Task' }],
-        '4702': [{ k: 'TaskName', label: 'Task' }],
-        // Services
+        '4688': [{ k: '_CommandLine', label: 'Cmd' }, { k: '_ParentProcess', label: 'Parent' }],
+        '4624': [{ k: 'LogonType', label: 'Type' }, { k: 'IpAddress', label: 'IP' }],
+        '4625': [{ k: 'LogonType', label: 'Type' }, { k: 'FailureReason' }],
+        '4648': [{ k: 'TargetServerName', label: 'Target' }],
+        '4672': [{ k: 'PrivilegeList', label: 'Privs' }],
+        '4720': [{ k: 'AccountName', label: 'User' }],
+        '4728': [{ k: 'MemberName', label: 'Member' }, { k: 'TargetUserName', label: 'Group' }],
         '7045': [{ k: 'ServiceName', label: 'Svc' }, { k: 'ImagePath', label: 'Img' }],
-        '7036': [{ k: 'param1', label: 'Svc' }, { k: 'param2', label: 'State' }]
+        '7036': [{ k: 'param1', label: 'Svc' }, { k: 'param2', label: 'State' }],
+        '1': [{ k: 'Image', label: 'Proc' }, { k: 'CommandLine', label: 'Cmd' }],
+        '3': [{ k: 'Image', label: 'Proc' }, { k: 'DestinationIp', label: 'DstIP' }]
     };
 
     function getDisplayFields(event) {
         if (!event.details) return [];
-        
         let fields = [];
-        const eid = event.details.EventID; // From EVTX parser
+        const eid = event.details.EventID;
         
+        // Priority 1: Use schema if defined
         if (eid && eventSchemas[eid]) {
-            // Use Schema
+            if (event.details.Category) fields.push({ k: 'Cat', v: event.details.Category });
             eventSchemas[eid].forEach(def => {
-                if (event.details[def.k]) {
-                    fields.push({ k: def.label, v: event.details[def.k] });
+                const val = event.details[def.k];
+                if (val && val !== '-') {
+                    // Truncate long values
+                    const displayVal = (val + '').length > 80 ? (val + '').substring(0, 77) + '...' : val;
+                    fields.push({ k: def.label || def.k, v: displayVal });
                 }
             });
-        } else if (event.source === 'Registry') {
-            // Registry Schema (Generic)
+        } 
+        // Priority 2: Registry events
+        else if (event.source === 'Registry') {
             if (event.details.Path) fields.push({ k: 'Path', v: event.details.Path });
             if (event.details.ValueName) fields.push({ k: 'Val', v: event.details.ValueName });
         }
         
-        // Fallback: If no schema matched or fields found, show generic top 3
+        // Priority 3: Show _ prefixed fields (our special fields)
+        if (fields.length === 0) {
+            Object.entries(event.details).forEach(([k, v]) => {
+                if (k.startsWith('_') && k !== '_Alert' && v && v !== '-') {
+                    const displayVal = (v + '').length > 80 ? (v + '').substring(0, 77) + '...' : v;
+                    fields.push({ k: k.substring(1), v: displayVal });
+                }
+            });
+        }
+        
+        // Priority 4: Fallback to first few fields
         if (fields.length === 0) {
             Object.entries(event.details).slice(0, 3).forEach(([k, v]) => {
-                if (k !== '_Alert' && k !== 'EventID' && (v + '').length < 60) {
-                    fields.push({ k: k, v: v }); // Keep original key
-                }
+                if (k !== '_Alert' && k !== 'EventID' && (v + '').length < 60) fields.push({ k: k, v: v });
             });
         }
         return fields;
     }
+    
+    $: sources = ['all', 'EventLog', 'Registry', 'Prefetch', 'Tasks', 'LNK', 'JumpLists', 'Amcache'];
 
+    // Column Resizing Logic
+    let columnWidths = { time: 180, source: 140, eid: 80, action: 250, subject: 250 };
+    let resizingCol = null;
+    let startX = 0; let startWidth = 0;
+    function startResize(e, col) { resizingCol = col; startX = e.clientX; startWidth = columnWidths[col]; window.addEventListener('mousemove', doResize); window.addEventListener('mouseup', stopResize); e.target.classList.add('active'); }
+    function doResize(e) { if (!resizingCol) return; const diff = e.clientX - startX; columnWidths[resizingCol] = Math.max(50, startWidth + diff); }
+    function stopResize() { resizingCol = null; window.removeEventListener('mousemove', doResize); window.removeEventListener('mouseup', stopResize); document.querySelectorAll('.resizer').forEach(el => el.classList.remove('active')); }
+    onDestroy(() => { window.removeEventListener('mousemove', doResize); window.removeEventListener('mouseup', stopResize); });
+
+    function nextPage() { currentPage++; fetchPage(); }
+    function prevPage() { if (currentPage > 1) currentPage--; fetchPage(); }
+    // function setPage(p) - removed as we don't know total pages
 </script>
+
 <div class="view-container">
     <div class="toolbar">
         <div class="search-box">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-            <input bind:value={searchTerm} placeholder="Search events..." />
+            <input bind:value={searchTerm} placeholder="Search events... (Tip: use eid:4688 for exact ID)" />
         </div>
         
         <div class="filter-group">
@@ -170,74 +176,141 @@
             <select bind:value={filterSource}>
                 <option value="all">More Sources...</option>
                 {#each sources as source}
-                    {#if source !== 'EventLog' && source !== 'Registry'}
+                    {#if source !== 'all' && source !== 'EventLog' && source !== 'Registry'}
                         <option value={source}>{source}</option>
                     {/if}
                 {/each}
             </select>
         </div>
         
-        <div class="count">{filteredTimeline.length} events</div>
+        <div class="count" style="display: flex; align-items: center; gap: 10px;">
+            <button class="icon-btn" on:click={loadData} title="Refresh Data">
+                🔄
+            </button>
+            <span>
+                Showing Page {currentPage}
+                {#if totalStorageCount > 0} 
+                    of {totalStorageCount} events
+                {/if}
+            </span>
+        </div>
     </div>
-
+    
+    
+    {#if lastError && lastError.includes('case not open')}
+        <div class="info-banner" style="background: #1e3a5f; color: #7dd3fc; padding: 16px; font-size: 0.9rem; border-bottom: 1px solid #38bdf8; display: flex; align-items: center; gap: 12px;">
+            <span style="font-size: 1.5rem;">📋</span>
+            <span>No analysis data yet. Please go to <strong>Dashboard</strong> and click <strong>Start Analysis</strong> to begin.</span>
+        </div>
+    {:else if lastError}
+        <div class="error-banner" style="background: #ef444422; color: #fca5a5; padding: 8px; font-size: 0.9rem; border-bottom: 1px solid #ef4444;">
+            {lastError}
+        </div>
+    {/if}
+    
     <div class="table-frame">
         <table>
             <thead>
                 <tr>
                     <th style="width: {columnWidths.time}px" on:click={() => toggleSort('event_time')}>
                         Time {sortField === 'event_time' ? (sortDirection === 'asc' ? '↑' : '↓') : ''}
-                        <div class="resizer" on:mousedown|stopPropagation={(e) => startResize(e, 'time')}></div>
+                        <div class="resizer" on:mousedown|preventDefault|stopPropagation={(e) => startResize(e, 'time')}></div>
                     </th>
                     <th style="width: {columnWidths.source}px" on:click={() => toggleSort('source')}>
                         Source {sortField === 'source' ? (sortDirection === 'asc' ? '↑' : '↓') : ''}
-                        <div class="resizer" on:mousedown|stopPropagation={(e) => startResize(e, 'source')}></div>
+                        <div class="resizer" on:mousedown|preventDefault|stopPropagation={(e) => startResize(e, 'source')}></div>
+                    </th>
+                    <th style="width: {columnWidths.eid}px" on:click={() => toggleSort('eid')}>
+                        ID {sortField === 'eid' ? (sortDirection === 'asc' ? '↑' : '↓') : ''}
+                        <div class="resizer" on:mousedown|preventDefault|stopPropagation={(e) => startResize(e, 'eid')}></div>
                     </th>
                     <th style="width: {columnWidths.action}px" on:click={() => toggleSort('action')}>
                         Action {sortField === 'action' ? (sortDirection === 'asc' ? '↑' : '↓') : ''}
-                        <div class="resizer" on:mousedown|stopPropagation={(e) => startResize(e, 'action')}></div>
+                        <div class="resizer" on:mousedown|preventDefault|stopPropagation={(e) => startResize(e, 'action')}></div>
                     </th>
                     <th style="width: {columnWidths.subject}px" on:click={() => toggleSort('subject')}>
                         Subject {sortField === 'subject' ? (sortDirection === 'asc' ? '↑' : '↓') : ''}
-                        <div class="resizer" on:mousedown|stopPropagation={(e) => startResize(e, 'subject')}></div>
+                        <div class="resizer" on:mousedown|preventDefault|stopPropagation={(e) => startResize(e, 'subject')}></div>
                     </th>
                     <th>Details snippet</th>
                 </tr>
             </thead>
             <tbody>
-                {#each filteredTimeline as event}
+                {#each $timeline as event}
                     <tr 
-                        class:alert-row={event.details && event.details._Alert}
+                        class:alert-critical={event.details && event.details._AlertLevel === 'critical'}
+                        class:alert-high={event.details && event.details._AlertLevel === 'high'}
+                        class:alert-medium={event.details && event.details._AlertLevel === 'medium'}
+                        class:alert-low={event.details && event.details._AlertLevel === 'low'}
                         on:click={() => $selectedEvent = event}
                     >
                         <td class="mono time">{new Date(event.event_time).toLocaleString()}</td>
                         <td>
-                            <span class="tag {event.source.toLowerCase().replace(/ /g, '')}">{event.source}</span>
+                            <div class="source-container">
+                                <span class="tag {event.source.toLowerCase().replace(/ /g, '')}">{event.source}</span>
+                                {#if event.artifact && event.artifact !== event.source}
+                                    <span class="artifact-name" title={event.evidence_ref?.source_path}>{event.artifact}</span>
+                                {/if}
+                            </div>
                         </td>
                         <td class="action-cell">
-                            {event.action}
-                            {#if event.details && event.details._Alert}
-                                <span class="alert-badge">⚠️ {event.details._Alert}</span>
+                            {#if event.details && event.details.EventID}
+                                <span class="eid-badge">{event.details.EventID}</span>
                             {/if}
                         </td>
-                        <td class="subject" title={event.subject}>{event.subject}</td>
+                        <td class="action-cell">
+                            <span class="action-text">{event.action}</span>
+                            {#if event.details && event.details._Alert}
+                                <div class="alert-pill {event.details._AlertLevel || 'medium'}">
+                                    <span class="marker">⚡</span> {event.details._Alert}
+                                </div>
+                            {/if}
+                        </td>
+
+
+                        <td class="subject" title={event.subject}>{event.subject || ''}</td>
                         <td class="details-preview">
                             <div class="pills">
                                 {#if event.details && typeof event.details === 'object'}
                                     {#each getDisplayFields(event) as field}
-                                          <span class="pill"><span class="k">{field.k}:</span> {field.v}</span>
+                                          <div class="pill">
+                                            <span class="k">{field.k}</span>
+                                            <span class="v" title={field.v}>{field.v}</span>
+                                        </div>
                                     {/each}
                                 {/if}
                             </div>
                         </td>
                     </tr>
                 {/each}
-                {#if filteredTimeline.length === 0}
+                {#if $timeline.length === 0}
                     <tr>
-                        <td colspan="5" class="empty-message">No events found matching your criteria.</td>
+                        <td colspan="6" class="empty-state">No events found</td>
                     </tr>
                 {/if}
             </tbody>
         </table>
+    </div>
+
+    <div class="footer">
+        <div class="page-info">
+            Showing Page {currentPage}
+            {#if totalStorageCount > 0} 
+                (Total Storage: {totalStorageCount})
+            {/if}
+        </div>
+        <div class="pagination-controls">
+            <button on:click={prevPage} disabled={currentPage === 1}>‹ Prev</button>
+            <span class="page-current">Page {currentPage}</span>
+            <button on:click={nextPage} disabled={!hasNextPage}>Next ›</button>
+            
+            <select bind:value={pageSize} class="size-selector">
+                <option value={50}>50 / page</option>
+                <option value={100}>100 / page</option>
+                <option value={500}>500 / page</option>
+                <option value={1000}>1000 / page</option>
+            </select>
+        </div>
     </div>
 </div>
 
@@ -328,15 +401,21 @@
     }
 
     select {
-        background: transparent;
-        border: none;
+        background: #151b27;
+        border: 1px solid #334155;
+        border-radius: 6px;
         padding: 6px 8px;
-        color: #94a3b8;
+        color: #e2e8f0;
         font-size: 0.85rem;
         outline: none;
         cursor: pointer;
     }
-    select:hover { color: #e2e8f0; }
+    select:hover { border-color: #38bdf8; }
+    
+    option {
+        background: #151b27;
+        color: white;
+    }
 
     .count {
         margin-left: auto;
@@ -355,6 +434,7 @@
         width: 100%;
         border-collapse: collapse;
         font-size: 0.9rem;
+        table-layout: fixed; /* Critical for column resizing */
     }
 
     th {
@@ -433,4 +513,107 @@
     .resizer:hover, .resizer.active {
         background: #38bdf8;
     }
+    .source-container { display: flex; flex-direction: column; gap: 2px; align-items: flex-start; }
+    .artifact-name { font-size: 0.7rem; color: #64748b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+    .eid-badge {
+        display: inline-block;
+        background: #1e293b;
+        color: #94a3b8;
+        border: 1px solid #334155;
+        border-radius: 4px;
+        padding: 2px 6px;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.75rem;
+        margin-right: 8px;
+        min-width: 36px;
+        text-align: center;
+    }
+    .action-text { color: #e2e8f0; font-weight: 500; }
+
+    .footer {
+        padding: 12px 24px;
+        background: #0b0e14;
+        border-top: 1px solid #1e293b;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-shrink: 0;
+    }
+    .page-info { color: #64748b; font-size: 0.85rem; font-family: 'JetBrains Mono', monospace; }
+    .pagination-controls { display: flex; align-items: center; gap: 8px; }
+    .pagination-controls button {
+        background: #1e293b;
+        border: 1px solid #334155;
+        color: #94a3b8;
+        padding: 4px 10px;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: all 0.2s;
+        font-family: inherit;
+    }
+    .pagination-controls button:hover:not(:disabled) {
+        background: #38bdf8; color: #0f172a; border-color: #38bdf8;
+    }
+    .pagination-controls button:disabled {
+        opacity: 0.5; cursor: not-allowed;
+    }
+    .page-current { color: #e2e8f0; font-size: 0.9rem; margin: 0 8px; font-variant-numeric: tabular-nums; }
+    .size-selector {
+        background: #1e293b;
+        color: #94a3b8;
+        border: 1px solid #334155;
+        border-radius: 4px;
+        padding: 4px;
+        margin-left: 12px;
+        font-size: 0.85rem;
+        outline: none;
+    }
+    
+    .icon-btn {
+        background: transparent;
+        border: none;
+        color: #94a3b8;
+        cursor: pointer;
+        padding: 4px;
+        border-radius: 4px;
+        transition: all 0.2s;
+    }
+    .icon-btn:hover {
+        background: #334155;
+        color: white;
+    }
+
+    /* Alert Row Styles - The "Handle" for analysts */
+    .alert-critical { background: rgba(220, 38, 38, 0.25) !important; }
+    .alert-critical td:first-child { border-left: 3px solid #dc2626; }
+    
+    .alert-high { background: rgba(234, 88, 12, 0.2) !important; }
+    .alert-high td:first-child { border-left: 3px solid #ea580c; }
+    
+    .alert-medium { background: rgba(202, 138, 4, 0.15) !important; }
+    .alert-medium td:first-child { border-left: 3px solid #ca8a04; }
+    
+    .alert-low { background: rgba(37, 99, 235, 0.1) !important; }
+    .alert-low td:first-child { border-left: 3px solid #2563eb; }
+
+    /* Alert Pills in Action Column */
+    .alert-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 0.75rem;
+        font-weight: 700;
+        margin-left: 8px;
+        white-space: nowrap;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+    }
+    
+    .alert-pill .marker { font-size: 0.8rem; }
+
+    .alert-pill.critical { background: #fee2e2; color: #991b1b; border: 1px solid #f87171; }
+    .alert-pill.high { background: #ffedd5; color: #9a3412; border: 1px solid #fdba74; }
+    .alert-pill.medium { background: #fef9c3; color: #854d0e; border: 1px solid #fde047; }
+    .alert-pill.low { background: #dbeafe; color: #1e40af; border: 1px solid #93c5fd; }
 </style>

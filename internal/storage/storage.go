@@ -17,6 +17,7 @@ type Storage interface {
 	SaveFindings(ctx context.Context, findings []model.Finding) error
 	QueryTimeline(ctx context.Context, filter *model.TimelineFilter) ([]model.TimelineEvent, error)
 	QueryFindings(ctx context.Context) ([]model.Finding, error)
+	NewStreamWriter(name string) (writeFunc func(v any) error, closeFunc func() error, err error)
 }
 
 // EvidenceLocation is a minimal record of imported evidence paths.
@@ -85,4 +86,8 @@ func (s *sqliteStub) QueryFindings(ctx context.Context) ([]model.Finding, error)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]model.Finding(nil), s.findings...), nil
+}
+
+func (s *sqliteStub) NewStreamWriter(name string) (func(v any) error, func() error, error) {
+	return func(v any) error { return nil }, func() error { return nil }, nil
 }

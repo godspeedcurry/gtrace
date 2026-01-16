@@ -12,10 +12,29 @@
     };
     
     // Advanced Options
-    let maxEvents = 5000;
-    let daysLookback = 30;
-    
-    // ... (rest of vars)
+    let maxEvents = 20000;
+    let daysLookback = 90;
+    let depthMode = 'deep'; // 'triage', 'standard', 'deep', 'custom'
+
+    function updateDepth(mode) {
+        depthMode = mode;
+        if (mode === 'triage') {
+            maxEvents = 1000;
+            daysLookback = 7;
+        } else if (mode === 'standard') {
+            maxEvents = 5000;
+            daysLookback = 30;
+        } else if (mode === 'deep') {
+            maxEvents = 20000;
+            daysLookback = 90;
+        }
+        // Custom leaves it alone
+    }
+
+    // Watch for manual editing to switch to custom
+    function onManualChange() {
+        if (depthMode !== 'custom') depthMode = 'custom';
+    }
 
     async function start() {
         if ($isAnalyzing) return;
@@ -48,7 +67,7 @@
                 
                 // Convert map to array
                 const components = Object.keys(selectedComponents).filter(k => selectedComponents[k]);
-                logs.update(l => [...l, `[Frontend] Starting Triage with components: ${JSON.stringify(components)}`]);
+                logs.update(l => [...l, {source: "Frontend", message: `Starting Triage with components: ${JSON.stringify(components)}`, ts: new Date().toISOString()}]);
                 await StartTriage("", components, options); 
             } else {
                 $analysisStatus = "Processing Evidence...";
@@ -60,7 +79,7 @@
             await RunAnalysis(); 
             
             $analysisStatus = "Fetching Results...";
-            $timeline = await GetTimeline(1000); // Pass limit
+            $timeline = await GetTimeline(parseInt(maxEvents)); // Pass user-defined limit
             $findings = await GetFindings();
             $analysisStatus = "Ready";
             
@@ -69,7 +88,7 @@
 
         } catch (err) {
             $analysisStatus = "Error: " + err;
-            $logs.update(l => [...l, "Error: " + err]);
+            logs.update(l => [...l, {source: "Error", message: String(err), ts: new Date().toISOString()}]);
         } finally {
             $isAnalyzing = false;
         }
@@ -129,14 +148,36 @@
             </div>
         {/if}
 
+        <div class="input-group">
+            <label>Analysis Depth</label>
+            <div class="depth-presets">
+                <button class:active={depthMode === 'triage'} on:click={() => updateDepth('triage')}>
+                    <strong>Quick Triage</strong>
+                    <span>1k Events / 7d</span>
+                </button>
+                <button class:active={depthMode === 'standard'} on:click={() => updateDepth('standard')}>
+                    <strong>Standard</strong>
+                    <span>5k Events / 30d</span>
+                </button>
+                <button class:active={depthMode === 'deep'} on:click={() => updateDepth('deep')}>
+                    <strong>Deep Dive</strong>
+                    <span>20k Events / 90d</span>
+                </button>
+                <button class:active={depthMode === 'custom'} on:click={() => updateDepth('custom')}>
+                    <strong>Custom</strong>
+                    <span>Manual Config</span>
+                </button>
+            </div>
+        </div>
+
         <div class="row">
             <div class="input-group flex-1">
-                <label>Max Events (Total Limit)</label>
-                <input type="number" bind:value={maxEvents} min="1000" max="100000" />
+                <label>Max Events</label>
+                <input type="number" bind:value={maxEvents} on:input={onManualChange} min="1000" max="1000000" step="1000" />
             </div>
             <div class="input-group flex-1">
                 <label>Lookback Days</label>
-                <input type="number" bind:value={daysLookback} min="1" max="3650" />
+                <input type="number" bind:value={daysLookback} on:input={onManualChange} min="1" max="3650" />
             </div>
         </div>
 
@@ -171,11 +212,12 @@
     .dashboard-container {
         max-width: 900px;
         margin: 0 auto;
-        padding: 40px;
+        padding: 24px 40px;
+        min-width: 600px;
     }
 
     header {
-        margin-bottom: 40px;
+        margin-bottom: 24px;
         text-align: center;
     }
 
@@ -197,15 +239,15 @@
     .cards-row {
         display: grid;
         grid-template-columns: 1fr 1fr;
-        gap: 24px;
-        margin-bottom: 32px;
+        gap: 16px;
+        margin-bottom: 20px;
     }
 
     .option-card {
         background: rgba(30, 41, 59, 0.3);
         border: 2px solid transparent;
-        padding: 32px;
-        border-radius: 16px;
+        padding: 20px;
+        border-radius: 12px;
         cursor: pointer;
         transition: all 0.2s ease;
         position: relative;
@@ -402,6 +444,49 @@
         cursor: not-allowed;
         filter: grayscale(1);
     }
+
+    .depth-presets {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 12px;
+        margin-bottom: 24px;
+    }
+
+    .depth-presets button {
+        background: #0f172a;
+        border: 1px solid #334155;
+        border-radius: 8px;
+        padding: 12px;
+        text-align: center;
+        cursor: pointer;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        transition: all 0.2s;
+    }
+
+    .depth-presets button strong {
+        color: #e2e8f0;
+        font-size: 0.9rem;
+        display: block;
+    }
+
+    .depth-presets button span {
+        color: #64748b;
+        font-size: 0.75rem;
+    }
+
+    .depth-presets button:hover {
+        background: rgba(255,255,255,0.05);
+        border-color: #475569;
+    }
+
+    .depth-presets button.active {
+        background: rgba(56, 189, 248, 0.1);
+        border-color: #38bdf8;
+    }
+    .depth-presets button.active strong { color: #38bdf8; }
+    .depth-presets button.active span { color: #bae6fd; }
 
     .spinner {
         width: 20px;

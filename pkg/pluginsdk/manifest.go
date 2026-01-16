@@ -29,6 +29,11 @@ type IODecl struct {
 type ParseRequest struct {
 	EvidencePath string            `json:"evidence_path"`
 	Metadata     map[string]string `json:"metadata,omitempty"`
+	// Callback for long running operations
+	ProgressCallback func(percent int) `json:"-"`
+
+	// StreamCallback for memory-efficient event processing
+	StreamCallback func(event model.TimelineEvent) `json:"-"`
 }
 
 type ParseResponse struct {
