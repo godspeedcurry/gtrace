@@ -3,3 +3,18 @@ test_demo/
 .DS_Store
 gtrace
 debug_output.txt
+test_batch/
+test_demo
+
+# Node
+node_modules/
+frontend/node_modules/
+frontend/dist/
+
+# Wails
+build/bin/
+frontend/wailsjs/
+
+# Test Data
+test_dataset/
+.gocache/
