@@ -1,15 +1,15 @@
 version: 2
 
-project_name: lumina-gui
-
+project_name: gtrace
+ 
 before:
   hooks:
     - go mod tidy
     # Build the frontend assets so they are ready for embedding
     - sh -c "cd frontend && npm run build"
-
+ 
 builds:
-  - id: lumina-gui-macos
+  - id: gtrace-macos
     env:
       - CGO_ENABLED=1
     goos:
@@ -19,10 +19,10 @@ builds:
     flags:
       - -tags=desktop,production
     ldflags:
-      - -s -w
+      - -s -w -extldflags "-framework UniformTypeIdentifiers"
 
 archives:
-  - id: lumina-gui-default
+  - id: gtrace-default
     format: tar.gz
     # This wraps the binary in a tar.gz
     name_template: >-
@@ -31,7 +31,7 @@ archives:
       {{- .Os }}_
       {{- .Arch }}
     builds:
-      - lumina-gui-macos
+      - gtrace-macos
 
 checksum:
   name_template: 'checksums.txt'

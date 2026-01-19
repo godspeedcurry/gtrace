@@ -1,54 +1,55 @@
-# Lumina (gtrace)
+# GTrace
 
-Lumina implies "Illumination".
-A next-generation, cross-platform DFIR (Digital Forensics & Incident Response) Triage Workbench.
-Connects the dots between **Execution**, **Existence**, and **Access** artifacts to visualize attack timelines instantly.
+[English](README_EN.md) | [中文文档](README.md)
 
-## 🌟 Key Features
+下一代跨平台 DFIR（数字取证与事件响应）分类工具。
+通过关联 **执行 (Execution)**、**存在 (Existence)** 和 **访问 (Access)** 等痕迹，即时可视化攻击时间线。
 
-*   **Live Live Triage**: Run directly on a suspect machine (Administrator required) to automatically extract execution evidence.
-*   **Live Registry Analysis**: Automatically dumps and parses locked Registry Hives (`SYSTEM`, `SAM`, `SOFTWARE`, `HKCU`).
-*   **Timeline Visualization**: Unifies disjointed artifacts into a single chronological view.
-*   **Interactive Findings**: Detects anomalies like "Simulated Execution" (ShimCache but no Prefetch).
+## 🌟 核心特性
 
-## 📊 Artifact Capabilities Matrix
+*   **实时现场取证 (Live Triage)**: 直接在可疑机器上运行（需要管理员权限），自动提取执行痕迹。
+*   **实时注册表分析**: 自动转储并解析锁定的系统注册表 hive 文件 (`SYSTEM`, `SAM`, `SOFTWARE`, `HKCU`)。
+*   **时间线可视化**: 将零散的痕迹合并为单一的按时间顺序排列的视图。
+*   **交互式发现**: 检测诸如“模拟执行”（有 ShimCache 记录但无 Prefetch 记录）等异常情况。
 
-| Artifact | Source | Evidence Type | Default: PC (Win10/11) | Default: Server (2016+) | What it tells you |
+## 📊 痕迹支持矩阵
+
+| 痕迹 (Artifact) | 来源 | 证据类型 | 默认: PC (Win10/11) | 默认: Server (2016+) | 作用 |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Prefetch** | `C:\Windows\Prefetch\*.pf` | Execution | ✅ **ON** | ❌ **OFF** (Note 1) | Program execution count & time. |
-| **ShimCache** | `HKLM\SYSTEM` | Existence | ✅ **ON** | ✅ **ON** | File existence & modification time. |
-| **Amcache** | `C:\Windows\System32\config\Amcache.hve` | Identity | ✅ **ON** | ✅ **ON** | SHA-1 hashes & compilation time. |
-| **UserAssist** | `HKCU\Software\...\UserAssist` | User Interaction | ✅ **ON** | ✅ **ON** | GUI-based program execution. |
-| **Jumplist** | `AutomaticDestinations-ms` | Access | ✅ **ON** | ✅ **ON** | Recent file access history. |
-| **Process** | Memory | State | ✅ **N/A** | ✅ **N/A** | Currently running processes. |
+| **Prefetch** | `C:\Windows\Prefetch\*.pf` | 执行 | ✅ **开启** | ❌ **关闭** (注 1) | 程序执行次数和最后执行时间。 |
+| **ShimCache** | `HKLM\SYSTEM` | 存在 | ✅ **开启** | ✅ **开启** | 文件存在证明及修改时间。 |
+| **Amcache** | `C:\Windows\System32\config\Amcache.hve` | 身份 | ✅ **开启** | ✅ **开启** | SHA-1 哈希值及编译时间。 |
+| **UserAssist** | `HKCU\Software\...\UserAssist` | 用户交互 | ✅ **开启** | ✅ **开启** | 基于 GUI 的程序执行记录。 |
+| **Jumplist** | `AutomaticDestinations-ms` | 访问 | ✅ **开启** | ✅ **开启** | 最近文件访问历史。 |
+| **Process** | 内存 | 状态 | ✅ **N/A** | ✅ **N/A** | 当前正在运行的进程。 |
 
-> **Note 1 (Server Prefetch)**: Windows Server disables Prefetch by default to save I/O. It is only enabled if the server is a Domain Controller or explicitly configured via Registry.
+> **注 1 (Server Prefetch)**: Windows Server 默认禁用 Prefetch 以节省 I/O。只有在服务器作为域控制器运行或通过注册表显式配置时才会启用。
 
-## 🚀 Quick Start (Live Triage)
+## 🚀 快速开始 (现场取证)
 
-1.  **Build** (Requires Go 1.21+ & Wails):
+1.  **构建** (需要 Go 1.21+ 和 Wails):
     ```bash
     wails build -platform windows/amd64
     ```
-2.  **Deploy**: Copy `build/bin/lumina-gui.exe` to the target machine.
-3.  **Run**: Right-click -> **Run as Administrator**.
-4.  **Triaging**:
-    *   Leave "Evidence Path" **EMPTY** to trigger **Live Triage Mode**.
-    *   Click "Start Triage".
-    *   Wait for the timeline to populate.
+2.  **部署**: 将 `build/bin/gtrace.exe` 复制到目标机器。
+3.  **运行**: 右键 -> **以管理员身份运行**。
+4.  **开始取证**:
+    *   保持 "Evidence Path" 为 **空** 以触发 **现场取证模式 (Live Triage Mode)**。
+    *   点击 "Start Triage"。
+    *   等待时间线数据加载完成。
 
-## 🛠 Project Layout
+## 🛠 项目结构
 
-- `cmd/lumina`: Main GUI entry point.
-- `internal/engine`: Analysis pipeline & job runner.
-- `internal/plugin`: Parser implementations (based on Velocidex).
-- `pkg/model`: Data models.
-- `frontend`: Svelte+Vite frontend application.
+- `cmd/gtrace`: 主 GUI 程序入口。
+- `internal/engine`: 分析管道与任务运行器。
+- `internal/plugin`: 解析器实现 (基于 Velocidex)。
+- `pkg/model`: 数据模型。
+- `frontend`: Svelte+Vite 前端应用。
 
-## ⚠️ Requirements
+## ⚠️ 需求
 
-*   **OS**: Windows 10/11/Server 2016+ (for Live Triage). macOS/Linux (for Offline Analysis).
-*   **Privileges**: **Administrator** rights required for Live Registry extraction (reg save) and raw disk access.
+*   **操作系统**: Windows 10/11/Server 2016+ (用于现场取证)。macOS/Linux (用于离线分析)。
+*   **权限**: 现场注册表提取 (reg save) 和原始磁盘访问需要 **管理员 (Administrator)** 权限。
 
 ---
 *Built with Wails & Svelte.*
