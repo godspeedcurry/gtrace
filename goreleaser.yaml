@@ -9,7 +9,7 @@ before:
     - sh -c "cd frontend && npm run build"
  
 builds:
-  - id: gtrace-macos
+    - id: gtrace-macos
     env:
       - CGO_ENABLED=1
     goos:
@@ -20,6 +20,19 @@ builds:
       - -tags=desktop,production
     ldflags:
       - -s -w -extldflags "-framework UniformTypeIdentifiers"
+
+  - id: gtrace-windows
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -tags=desktop,production,native_webview2loader
+    ldflags:
+      - -s -w -H windowsgui
 
 archives:
   - id: gtrace-default
@@ -32,6 +45,7 @@ archives:
       {{- .Arch }}
     builds:
       - gtrace-macos
+      - gtrace-windows
 
 checksum:
   name_template: 'checksums.txt'
