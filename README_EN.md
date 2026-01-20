@@ -21,6 +21,9 @@ Connects the dots between **Execution**, **Existence**, and **Access** artifacts
 | **Amcache** | `C:\Windows\System32\config\Amcache.hve` | Identity | ✅ **ON** | ✅ **ON** | SHA-1 hashes & compilation time. |
 | **UserAssist** | `HKCU\Software\...\UserAssist` | User Interaction | ✅ **ON** | ✅ **ON** | GUI-based program execution. |
 | **Jumplist** | `AutomaticDestinations-ms` | Access | ✅ **ON** | ✅ **ON** | Recent file access history. |
+| **Network** | `netstat` / `arp` / `ipconfig` | Communication | ✅ **ON** | ✅ **ON** | Active connections, ARP cache, Interface config (GBK supported). |
+| **Browser** | Chrome/Edge History | Access | ✅ **ON** | ✅ **ON** | Browser history and downloads. |
+| **WMI** | WMI Repository | Persistence | ✅ **ON** | ✅ **ON** | WMI Filter/Consumer persistence mechanisms. |
 | **Process** | Memory | State | ✅ **N/A** | ✅ **N/A** | Currently running processes. |
  
 > **Note 1 (Server Prefetch)**: Windows Server disables Prefetch by default to save I/O. It is only enabled if the server is a Domain Controller or explicitly configured via Registry.

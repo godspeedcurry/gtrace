@@ -21,6 +21,9 @@
 | **Amcache** | `C:\Windows\System32\config\Amcache.hve` | 身份 | ✅ **开启** | ✅ **开启** | SHA-1 哈希值及编译时间。 |
 | **UserAssist** | `HKCU\Software\...\UserAssist` | 用户交互 | ✅ **开启** | ✅ **开启** | 基于 GUI 的程序执行记录。 |
 | **Jumplist** | `AutomaticDestinations-ms` | 访问 | ✅ **开启** | ✅ **开启** | 最近文件访问历史。 |
+| **Network** | `netstat` / `arp` / `ipconfig` | 通信 | ✅ **开启** | ✅ **开启** | 活动网络连接、ARP 缓存、网卡信息 (支持中文环境)。 |
+| **Browser** | Chrome/Edge History | 访问 | ✅ **开启** | ✅ **开启** | 浏览器历史记录和下载记录。 |
+| **WMI** | WMI Repository | 持久化 | ✅ **开启** | ✅ **开启** | WMI Filter/Consumer 持久化后门检测。 |
 | **Process** | 内存 | 状态 | ✅ **N/A** | ✅ **N/A** | 当前正在运行的进程。 |
 
 > **注 1 (Server Prefetch)**: Windows Server 默认禁用 Prefetch 以节省 I/O。只有在服务器作为域控制器运行或通过注册表显式配置时才会启用。
