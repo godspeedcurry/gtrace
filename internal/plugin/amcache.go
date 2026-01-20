@@ -101,8 +101,8 @@ func (p *AmcacheParser) Parse(ctx context.Context, in pluginsdk.ParseRequest) (*
 				evt := model.TimelineEvent{
 					ID:        fmt.Sprintf("amcache-%s-%d", sha1, ts.UnixNano()),
 					EventTime: ts,
-					Source:    "amcache",
-					Artifact:  "amcache",
+					Source:    "Amcache",
+					Artifact:  "Amcache",
 					Action:    "EXECUTION_EVIDENCE",
 					Subject:   fullPath,
 					Details: map[string]string{
@@ -113,7 +113,11 @@ func (p *AmcacheParser) Parse(ctx context.Context, in pluginsdk.ParseRequest) (*
 						SourcePath: in.EvidencePath,
 					},
 				}
-				events = append(events, evt)
+				if in.StreamCallback != nil {
+					in.StreamCallback(evt)
+				} else {
+					events = append(events, evt)
+				}
 			}
 		}
 	}

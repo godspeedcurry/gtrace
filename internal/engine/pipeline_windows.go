@@ -51,3 +51,15 @@ func gbkToUtf8(s []byte) (string, error) {
 	}
 	return string(d), nil
 }
+
+func copyLockedFile(src, dst string) error {
+	// Attempt to copy a locked file using cmd.exe /c copy /b
+	// The /b flag is for binary.
+	// We use cmd.exe because it's more direct than PowerShell for simple copies
+	// and often behaves differently with locks.
+	cmd := exec.Command("cmd", "/c", "copy", "/y", "/b", src, dst)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+
+	err := cmd.Run()
+	return err
+}

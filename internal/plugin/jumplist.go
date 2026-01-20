@@ -86,13 +86,22 @@ func (p *JumplistParser) Parse(ctx context.Context, in pluginsdk.ParseRequest) (
 		}
 
 		// Extract Data
-		targetPath := lnkObj.LinkInfo.LocalBasePath
+		// Golnk usually returns utf-8 strings but if the LNK uses local code page (ANSI) AND that page is GBK,
+		// golnk might just cast bytes to string or use a default decoder that fails.
+		// We try to "repair" the string if it looks damaged, or just treat it as bytes.
+		// Since we don't have access to underlying bytes easily without forking golnk,
+		// we assume `LocalBasePath` string is `string(original_bytes)`.
+		targetPath := BytesToString([]byte(lnkObj.LinkInfo.LocalBasePath))
 		if targetPath == "" {
-			targetPath = lnkObj.StringData.RelativePath
+			targetPath = BytesToString([]byte(lnkObj.StringData.RelativePath))
 		}
 
 		// Attributes
-		args := lnkObj.StringData.CommandLineArguments
+		args := BytesToString([]byte(lnkObj.StringData.CommandLineArguments))
+
+		// Basic sanity check to remove garbage
+		targetPath = CleanString(targetPath)
+		args = CleanString(args)
 
 		// Timestamps
 		// For Jumplists, the OLE Stream Modification Time is when the entry was updated (User Access)

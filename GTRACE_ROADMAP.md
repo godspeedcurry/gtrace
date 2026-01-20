@@ -1,7 +1,7 @@
-# Lumina: Next-Gen DFIR Triage Platform
+# GTrace: Next-Gen DFIR Triage Platform
 
 ## Project Status: Active Development
-We have successfully transitioned the `gtrace` project into **Lumina**, a Go-based, architecturally sound DFIR triage tool.
+We have successfully transitioned the `gtrace` project into **GTrace**, a Go-based, architecturally sound DFIR triage tool.
 
 ### Accomplished
 1. **Core Architecture**: implemented a clean architecture with `Engine`, `Plugin`, `Storage` decoupling.
@@ -12,7 +12,7 @@ We have successfully transitioned the `gtrace` project into **Lumina**, a Go-bas
     - **[NEW] WINTri Process List**: Parses `Process_List.csv` from WINTri collection.
     - **LNK Stub**: Basic identification of LNK files.
 5. **Tooling**: `tools/generate_mock_data.go` to simulate WINTri exports for testing.
-6. **GUI**: Wails-based frontend (Svelte) available in `lumina-gui.app`.
+6. **GUI**: Wails-based frontend (Svelte) available in `gtrace-gui.app`.
 
 ## Roadmap & Next Steps
 
@@ -27,10 +27,12 @@ We have successfully transitioned the `gtrace` project into **Lumina**, a Go-bas
 ### Phase 2: GUI Enhancements
 - [x] Add "Findings" Dashboard (High/Medium/Low alerts).
 - [x] Add Timeline Filtering (Filter by Source: "Prefetch" vs "Process").
+- [x] **[NEW] Advanced SQL Query Engine**: In-memory SQLite interface for "invincible" data exploration.
+- [x] **[NEW] Timeline UI Redesign**: Modern, compact toolbars and dynamic filter controls.
 
 ### Phase 3: Analysis Logic
 - [x] **Execution Anomaly**: Correlate "Process Execution" with "Prefetch" existence. (Did a process run without a prefetch entry? - Anti-Forensics?)
 
-### Phase 4: NTFS Artifacts (Future)
+### Phase 4: NTFS Artifacts (Planned)
 - [ ] Integrate MFT Parser (`www.velocidex.com/golang/go-ntfs`).
 - [ ] Integrate USN Journal Parser.

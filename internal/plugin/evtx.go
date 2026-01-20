@@ -445,6 +445,30 @@ func (p *EvtxParser) Parse(ctx context.Context, in pluginsdk.ParseRequest) (*plu
 			}
 			props["EventID"] = fmt.Sprintf("%d", eid)
 
+			// Extract Level (1=Critical, 2=Error, 3=Warning, 4=Info)
+			if lvlRaw, ok := sysDict.Get("Level"); ok {
+				var lvl int
+				switch v := lvlRaw.(type) {
+				case int:
+					lvl = v
+				case int64:
+					lvl = int(v)
+				case uint64:
+					lvl = int(v)
+				}
+				if lvl > 0 {
+					switch lvl {
+					case 1:
+						props["_AlertLevel"] = "Critical"
+					case 2:
+						props["_AlertLevel"] = "High" // Error
+					case 3:
+						props["_AlertLevel"] = "Medium" // Warning
+					}
+					props["Level"] = fmt.Sprintf("%d", lvl)
+				}
+			}
+
 			// Flatten EventData
 			// Event/EventData/*
 			if eventDataRaw, ok := eventDict.Get("EventData"); ok {

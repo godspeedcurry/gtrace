@@ -1,6 +1,31 @@
 <script>
+    import { onMount, onDestroy } from 'svelte';
     import { inputMode, casePath, evidencePath, overwriteCase, analysisStatus, isAnalyzing, currentView, timeline, findings, logs } from '../stores.js';
-    import { StartTriage, RunAnalysis, GetTimeline, GetFindings, OpenCase, GetDefaultCasePath } from '../../wailsjs/go/app/App.js';
+    import { StartTriage, RunAnalysis, GetTimeline, GetFindings, OpenCase, GetDefaultCasePath, BrowseEvidencePath, GetSystemInfo } from '../../wailsjs/go/app/App.js';
+    import { EventsOn } from '../../wailsjs/runtime/runtime.js';
+
+    // System Info
+    let systemInfo = null;
+    
+    // Progress Tracking
+    let progress = 0;
+    let progressLabel = "";
+
+    onMount(async () => {
+        // Listen for Triage Progress
+        EventsOn("triage:progress", (data) => {
+             // { current: 1, total: 10, percent: 10 }
+             progress = data.percent;
+             progressLabel = `${data.percent}%`;
+        });
+
+        // Only fetch system info in Live mode ideally, but it's cheap so fetch always
+        try {
+            systemInfo = await GetSystemInfo();
+        } catch (e) {
+            console.log("Failed to get system info", e);
+        }
+    });
 
     // Live Analysis Options
     let selectedComponents = {
@@ -8,13 +33,27 @@
         'Registry': true,
         'Prefetch': true,
         'Tasks': true,
-        'JumpLists': true
+        'JumpLists': true,
+        'Network': true,
+        'WMI': true,
+        'Browser': true
     };
     
     // Advanced Options
     let maxEvents = 20000;
     let daysLookback = 90;
     let depthMode = 'deep'; // 'triage', 'standard', 'deep', 'custom'
+
+    async function browse() {
+        try {
+            const path = await BrowseEvidencePath();
+            if (path) {
+                $evidencePath = path;
+            }
+        } catch (e) {
+            console.error(e);
+        }
+    }
 
     function updateDepth(mode) {
         depthMode = mode;
@@ -34,6 +73,12 @@
     // Watch for manual editing to switch to custom
     function onManualChange() {
         if (depthMode !== 'custom') depthMode = 'custom';
+    }
+
+    function toggleSelection(state) {
+        for (const key in selectedComponents) {
+            selectedComponents[key] = state;
+        }
     }
 
     async function start() {
@@ -96,10 +141,21 @@
 </script>
 
 <div class="dashboard-container">
-    <header>
-        <h1>New Investigation</h1>
-        <p>Select your analysis source to begin.</p>
-    </header>
+    <div class="scroll-wrapper">
+        <div class="content-width">
+            <header>
+                <h1>New Investigation</h1>
+                {#if systemInfo && $inputMode === 'live'}
+                    <div class="system-info-pill">
+                        <span class="host">{systemInfo.hostname}</span>
+                        <span class="sep">•</span>
+                        <span class="detail">{systemInfo.ip}</span>
+                        <span class="sep">•</span>
+                        <span class="detail">{systemInfo.os} ({systemInfo.arch})</span>
+                    </div>
+                {/if}
+                <p>Select your analysis source to begin.</p>
+            </header>
 
     <div class="cards-row">
         <!-- Live Mode Card -->
@@ -126,30 +182,43 @@
     <div class="config-panel">
         {#if $inputMode === 'live'}
              <div class="input-group">
-                <label>Select Artifacts</label>
+                <div class="section-header">
+                    <div class="section-label">Select Artifacts</div>
+                    <div class="trace-actions">
+                        <button class="text-btn" on:click={() => toggleSelection(true)}>All</button>
+                        <span class="sep">/</span>
+                        <button class="text-btn" on:click={() => toggleSelection(false)}>None</button>
+                    </div>
+                </div>
                 <div class="checklist">
                     <label><input type="checkbox" bind:checked={selectedComponents['EventLogs']}> Event Logs</label>
                     <label><input type="checkbox" bind:checked={selectedComponents['Registry']}> Registry</label>
                     <label><input type="checkbox" bind:checked={selectedComponents['Prefetch']}> Prefetch</label>
                     <label><input type="checkbox" bind:checked={selectedComponents['Tasks']}> Tasks</label>
                     <label><input type="checkbox" bind:checked={selectedComponents['JumpLists']}> JumpLists</label>
+                    <label><input type="checkbox" bind:checked={selectedComponents['Network']}> Network (Live)</label>
+                    <label><input type="checkbox" bind:checked={selectedComponents['WMI']}> WMI Persistence</label>
+                    <label><input type="checkbox" bind:checked={selectedComponents['Browser']}> Browser Scraper</label>
                 </div>
             </div>
         {/if}
 
         {#if $inputMode === 'offline'}
             <div class="input-group">
-                <label>Evidence Path</label>
+                <div class="section-label">Evidence Path</div>
                 <div class="input-wrapper">
                     <input bind:value={$evidencePath} placeholder="/path/to/artifacts" type="text" />
-                    <!-- Optionally add a file picker button here if Wails supports it easily -->
+                    <button class="browse-btn" on:click={browse}>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><folder></folder><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                        Browse
+                    </button>
                 </div>
                 <small>Directory containing artifacts.</small>
             </div>
         {/if}
 
         <div class="input-group">
-            <label>Analysis Depth</label>
+            <div class="section-label">Analysis Depth</div>
             <div class="depth-presets">
                 <button class:active={depthMode === 'triage'} on:click={() => updateDepth('triage')}>
                     <strong>Quick Triage</strong>
@@ -172,18 +241,18 @@
 
         <div class="row">
             <div class="input-group flex-1">
-                <label>Max Events</label>
+                <div class="section-label">Max Events</div>
                 <input type="number" bind:value={maxEvents} on:input={onManualChange} min="1000" max="1000000" step="1000" />
             </div>
             <div class="input-group flex-1">
-                <label>Lookback Days</label>
+                <div class="section-label">Lookback Days</div>
                 <input type="number" bind:value={daysLookback} on:input={onManualChange} min="1" max="3650" />
             </div>
         </div>
 
         <div class="row">
             <div class="input-group flex-1">
-                <label>Case Output Path (Optional)</label>
+                <div class="section-label">Case Output Path (Optional)</div>
                 <input bind:value={$casePath} placeholder="Auto-generated if empty" type="text" />
             </div>
             
@@ -197,23 +266,62 @@
         </div>
     </div>
 
+        </div>
+    </div>
+
     <div class="action-bar">
-        <button class="primary-btn" on:click={start} disabled={$isAnalyzing || ($inputMode === 'offline' && !$evidencePath)}>
-            {#if $isAnalyzing}
-                <span class="spinner"></span> Processing...
-            {:else}
-                Start Analysis <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
-            {/if}
-        </button>
+        <div class="content-width">
+            <div class="action-stack">
+                <button class="primary-btn" on:click={start} disabled={$isAnalyzing || ($inputMode === 'offline' && !$evidencePath)}>
+                    {#if $isAnalyzing}
+                        <span class="spinner"></span> 
+                        <span>Processing... {progressLabel}</span>
+                    {:else}
+                        Start Analysis <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+                    {/if}
+                </button>
+
+                {#if $isAnalyzing}
+                    <div class="progress-rail">
+                        <div class="progress-fill" style="width: {progress}%"></div>
+                    </div>
+                {/if}
+            </div>
+        </div>
     </div>
 </div>
 
 <style>
     .dashboard-container {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        width: 100%;
+        overflow: hidden;
+        padding: 0;
+        margin: 0;
+    }
+
+    .scroll-wrapper {
+        flex: 1;
+        overflow-y: auto;
+        width: 100%;
+    }
+
+    .content-width {
         max-width: 900px;
+        min-width: 600px;
         margin: 0 auto;
         padding: 24px 40px;
-        min-width: 600px;
+    }
+
+    .action-bar {
+        background: #0b0e14;
+        border-top: 1px solid #1e293b;
+        padding: 0;
+        flex-shrink: 0;
+        z-index: 10;
+        box-shadow: 0 -4px 6px -1px rgba(0, 0, 0, 0.1);
     }
 
     header {
@@ -235,6 +343,22 @@
         color: #64748b;
         font-size: 1.1rem;
     }
+
+    .system-info-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        background: rgba(30, 41, 59, 0.4);
+        border: 1px solid #334155;
+        padding: 4px 12px;
+        border-radius: 99px;
+        margin-bottom: 12px;
+        font-size: 0.9rem;
+        color: #94a3b8;
+    }
+    .system-info-pill .host { color: #e2e8f0; font-weight: 600; }
+    .system-info-pill .sep { color: #475569; }
+    .system-info-pill .detail { color: #94a3b8; font-family: monospace; }
 
     .cards-row {
         display: grid;
@@ -325,7 +449,7 @@
     
     .input-group:last-child { margin-bottom: 0; }
 
-    label {
+    label, .section-label {
         font-size: 0.85rem;
         color: #94a3b8;
         font-weight: 600;
@@ -343,6 +467,62 @@
         width: 100%;
         box-sizing: border-box;
         transition: border-color 0.2s;
+        flex: 1; /* allow it to grow in flex container */
+    }
+
+    .section-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .trace-actions {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 0.8rem;
+    }
+
+    .text-btn {
+        background: none;
+        border: none;
+        color: #64748b;
+        cursor: pointer;
+        padding: 2px 6px;
+        font-size: 0.8rem;
+        transition: color 0.2s;
+        text-transform: uppercase;
+        font-weight: 600;
+        letter-spacing: 0.05em;
+    }
+    .text-btn:hover { color: #38bdf8; }
+    .trace-actions .sep { color: #334155; }
+
+    .input-wrapper {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        width: 100%;
+    }
+
+    .browse-btn {
+        background: #1e293b;
+        border: 1px solid #334155;
+        color: #94a3b8;
+        padding: 0 20px;
+        height: 50px; /* Match input height roughly */
+        border-radius: 8px;
+        cursor: pointer;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        transition: all 0.2s;
+    }
+    .browse-btn:hover {
+        background: #334155;
+        color: white;
+        border-color: #475569;
     }
     
     input[type="text"]:focus, input[type="number"]:focus {
@@ -430,6 +610,7 @@
         transition: all 0.2s;
         display: inline-flex;
         align-items: center;
+        justify-content: center; /* Center content */
         gap: 12px;
         box-shadow: 0 4px 6px -1px rgba(14, 165, 233, 0.2);
     }
@@ -498,4 +679,28 @@
         display: inline-block;
     }
     @keyframes spin { 100% { transform: rotate(360deg); } }
+
+    .action-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        width: 100%;
+        max-width: 400px; /* Limit width */
+        margin: 0 auto;   /* Center element since it is inside a larger block */
+    }
+
+    .progress-rail {
+        width: 100%;
+        height: 6px;
+        background: #1e293b;
+        border-radius: 3px;
+        overflow: hidden;
+    }
+
+    .progress-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #38bdf8, #2563eb);
+        transition: width 0.3s ease-out;
+        box-shadow: 0 0 10px rgba(56, 189, 248, 0.5);
+    }
 </style>

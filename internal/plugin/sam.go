@@ -223,7 +223,7 @@ func (p *SAMParser) Parse(ctx context.Context, in pluginsdk.ParseRequest) (*plug
 			// Actually let's include them.
 		}
 
-		events = append(events, model.TimelineEvent{
+		evt := model.TimelineEvent{
 			ID:        fmt.Sprintf("user-%s-%d", ridName, evtTime.UnixNano()),
 			EventTime: evtTime,
 			Source:    "SAM",
@@ -234,7 +234,12 @@ func (p *SAMParser) Parse(ctx context.Context, in pluginsdk.ParseRequest) (*plug
 			EvidenceRef: model.EvidenceRef{
 				SourcePath: in.EvidencePath,
 			},
-		})
+		}
+		if in.StreamCallback != nil {
+			in.StreamCallback(evt)
+		} else {
+			events = append(events, evt)
+		}
 	}
 
 	return &pluginsdk.ParseResponse{

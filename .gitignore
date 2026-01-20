@@ -18,4 +18,17 @@ frontend/wailsjs/
 
 # Test Data
 test_dataset/
+test_demo/
+test_batch/
+debug_output.txt
 .gocache/
+
+# Wails Artifacts
+build/bin/
+build/windows/
+build/darwin/
+frontend/wailsjs/
+
+# Editor
+.idea/
+.vscode/

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -12,6 +13,8 @@ import (
 	"sync" // Removed sort
 
 	"gtrace/pkg/model"
+
+	_ "modernc.org/sqlite"
 )
 
 // FileStorage persists artifacts, timeline, and findings into JSONL files inside the case directory.
@@ -280,6 +283,14 @@ func (f *FileStorage) SearchTimeline(ctx context.Context, filter *model.Timeline
 			continue
 		}
 
+		// Alert Level Filter
+		if filter.Level != "" {
+			level, ok := ev.Details["_AlertLevel"]
+			if !ok || !strings.EqualFold(level, filter.Level) {
+				continue
+			}
+		}
+
 		if filter.TimeStart != nil && ev.EventTime.Before(*filter.TimeStart) {
 			continue
 		}
@@ -319,23 +330,70 @@ func (f *FileStorage) CountTimelineEvents(ctx context.Context) (int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	// Optimization: Just count lines
 	path := filepath.Join(f.dataDir(), "timeline.jsonl")
 	file, err := os.Open(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
 		return 0, err
 	}
 	defer file.Close()
 
 	count := 0
-	// bufio.Scanner max token size might be issue for huge lines, but events are usually small.
-	// However, for pure line counting, simple read is safer/faster if we don't parse JSON.
-	// Using scanner is fine for now.
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		count++
 	}
 	return count, scanner.Err()
+}
+
+// GetEventStats returns a map of source names to event counts.
+// EventStats contains breakdown of counts
+type EventStats struct {
+	Sources map[string]int `json:"sources"`
+	Levels  map[string]int `json:"levels"`
+}
+
+// GetEventStats returns a map of source names and level names to event counts.
+func (f *FileStorage) GetEventStats(ctx context.Context) (*EventStats, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	path := filepath.Join(f.dataDir(), "timeline.jsonl")
+	file, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &EventStats{Sources: make(map[string]int), Levels: make(map[string]int)}, nil
+		}
+		return nil, err
+	}
+	defer file.Close()
+
+	res := &EventStats{
+		Sources: make(map[string]int),
+		Levels:  make(map[string]int),
+	}
+
+	scanner := bufio.NewScanner(file)
+	buf := make([]byte, 0, 1024*1024)
+	scanner.Buffer(buf, 10*1024*1024)
+
+	for scanner.Scan() {
+		var ev struct {
+			Source  string            `json:"source"`
+			Details map[string]string `json:"details"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &ev); err == nil {
+			if ev.Source != "" {
+				res.Sources[ev.Source]++
+			}
+			if level, ok := ev.Details["_AlertLevel"]; ok && level != "" {
+				res.Levels[strings.ToLower(level)]++
+			}
+		}
+	}
+	return res, scanner.Err()
 }
 
 func (f *FileStorage) QueryFindings(ctx context.Context) ([]model.Finding, error) {
@@ -361,6 +419,107 @@ func (f *FileStorage) QueryFindings(ctx context.Context) ([]model.Finding, error
 		return nil, err
 	}
 	return findings, nil
+}
+
+func (f *FileStorage) ExecuteSQLQuery(ctx context.Context, query string) ([]map[string]any, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	// 1. Create in-memory SQLite
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		return nil, fmt.Errorf("open sqlite: %w", err)
+	}
+	defer db.Close()
+
+	// 2. Create table
+	_, err = db.Exec(`CREATE TABLE timeline (
+		id TEXT,
+		event_time DATETIME,
+		source TEXT,
+		artifact TEXT,
+		action TEXT,
+		subject TEXT,
+		details_json TEXT
+	)`)
+	if err != nil {
+		return nil, fmt.Errorf("create table: %w", err)
+	}
+
+	// 3. Load data from JSONL
+	path := filepath.Join(f.dataDir(), "timeline.jsonl")
+	file, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Return empty if no data
+		} else {
+			return nil, err
+		}
+	} else {
+		defer file.Close()
+		scanner := bufio.NewScanner(file)
+		// 10MB buffer
+		buf := make([]byte, 0, 1024*1024)
+		scanner.Buffer(buf, 10*1024*1024)
+
+		stmt, err := db.Prepare("INSERT INTO timeline (id, event_time, source, artifact, action, subject, details_json) VALUES (?,?,?,?,?,?,?)")
+		if err != nil {
+			return nil, err
+		}
+		defer stmt.Close()
+
+		tx, err := db.Begin()
+		if err != nil {
+			return nil, err
+		}
+
+		for scanner.Scan() {
+			var ev model.TimelineEvent
+			if err := json.Unmarshal(scanner.Bytes(), &ev); err == nil {
+				details, _ := json.Marshal(ev.Details)
+				_, _ = tx.Stmt(stmt).Exec(ev.ID, ev.EventTime, ev.Source, ev.Artifact, ev.Action, ev.Subject, string(details))
+			}
+		}
+		tx.Commit()
+	}
+
+	// 4. Run user query
+	rows, err := db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("query failed: %w", err)
+	}
+	defer rows.Close()
+
+	// 5. Build dynamic result
+	cols, _ := rows.Columns()
+	var results []map[string]any
+
+	for rows.Next() {
+		// Create a slice of any to store values
+		values := make([]any, len(cols))
+		scanArgs := make([]any, len(cols))
+		for i := range values {
+			scanArgs[i] = &values[i]
+		}
+
+		if err := rows.Scan(scanArgs...); err != nil {
+			return nil, err
+		}
+
+		rowMap := make(map[string]any)
+		for i, col := range cols {
+			val := values[i]
+			// SQLite driver might return []byte for strings/json
+			if b, ok := val.([]byte); ok {
+				rowMap[col] = string(b)
+			} else {
+				rowMap[col] = val
+			}
+		}
+		results = append(results, rowMap)
+	}
+
+	return results, nil
 }
 
 func (f *FileStorage) appendJSONL(name string, v any) error {

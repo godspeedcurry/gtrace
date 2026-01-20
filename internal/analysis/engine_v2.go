@@ -13,30 +13,52 @@ import (
 
 // ActiveRule wraps a compiled Sigma rule
 type ActiveRule struct {
-	Rule      sigma.Rule
-	Evaluator *evaluator.RuleEvaluator
+	ID          string
+	Title       string
+	Description string
+	Level       string
+	Tags        []string
+	Category    string // logsource.category
+	Evaluator   *evaluator.RuleEvaluator
 }
 
 // EngineV2 is the new Sigma engine using the industry standard library
 type EngineV2 struct {
-	Rules []ActiveRule
+	Rules       []ActiveRule
+	RulesByCat  map[string][]int // Maps category to indices in Rules slice
+	GlobalRules []int            // Rules with no specific category
 }
 
 // NewEngineV2 initializes the engine with bundled YAML rules and optional external rules via FS
 func NewEngineV2(ruleFS fs.FS, rootDir string) (*EngineV2, error) {
 	var activeRules []ActiveRule
+	rulesByCat := make(map[string][]int)
+	var globalRules []int
 
 	// Helper to load rule
 	load := func(content []byte, name string) {
 		rule, err := sigma.ParseRule(content)
 		if err != nil {
-			// fmt.Printf("Error parsing rule %s: %v\n", name, err)
 			return
 		}
-		activeRules = append(activeRules, ActiveRule{
-			Rule:      rule,
-			Evaluator: evaluator.ForRule(rule),
-		})
+
+		idx := len(activeRules)
+		ar := ActiveRule{
+			ID:          rule.ID,
+			Title:       rule.Title,
+			Description: rule.Description,
+			Level:       rule.Level,
+			Tags:        rule.Tags,
+			Category:    rule.Logsource.Category,
+			Evaluator:   evaluator.ForRule(rule),
+		}
+		activeRules = append(activeRules, ar)
+
+		if ar.Category != "" {
+			rulesByCat[ar.Category] = append(rulesByCat[ar.Category], idx)
+		} else {
+			globalRules = append(globalRules, idx)
+		}
 	}
 
 	// 1. Load Bundled Rules (Hardcoded)
@@ -64,57 +86,106 @@ func NewEngineV2(ruleFS fs.FS, rootDir string) (*EngineV2, error) {
 	}
 
 	return &EngineV2{
-		Rules: activeRules,
+		Rules:       activeRules,
+		RulesByCat:  rulesByCat,
+		GlobalRules: globalRules,
 	}, nil
 }
 
 // Evaluate checks an event against all loaded rules
 func (e *EngineV2) Evaluate(ev model.TimelineEvent) *ActiveRule {
 	// 1. Adapter: Convert TimelineEvent to map for Sigma
-	// We need to map our schema to Sigma's standard schema (sysmon-like)
+	// We map our heterogeneous fields to standard Sysmon-style schema used by most Sigma rules.
 	obj := make(map[string]interface{})
 
-	// Copy all Details first
+	// Flat copy of all details
 	for k, v := range ev.Details {
 		obj[k] = v
 	}
 
-	// Helper to ensure field existence
-	ensure := func(target, source string) {
-		if v, ok := ev.Details[source]; ok && v != "-" {
-			obj[target] = v
+	// Heuristic/Standard Mappings
+	ensure := func(target string, sources ...string) {
+		for _, s := range sources {
+			if v, ok := ev.Details[s]; ok && v != "" && v != "-" {
+				obj[target] = v
+				return
+			}
 		}
 	}
 
-	// Standard Mappings
-	// EventID is needed as string or int? sigma-go handles string usually
+	// Core Fields
 	ensure("EventID", "EventID")
+	ensure("Channel", "Channel")
+	ensure("Provider_Name", "Provider")
 
-	// Process Creation Mappings
-	ensure("Image", "NewProcessName")
-	ensure("CommandLine", "CommandLine")
-	ensure("ParentImage", "ParentProcessName")
-	ensure("ParentCommandLine", "ParentDetails") // heuristics
+	// Process Creation (4688 / Sysmon 1)
+	ensure("Image", "NewProcessName", "ExePath")
+	ensure("CommandLine", "_CommandLine", "CommandLine")
+	ensure("ParentImage", "ParentProcessName", "ParentPath")
+	ensure("ParentCommandLine", "ParentCommandLine", "ParentDetails")
+	ensure("ProcessId", "ProcessId", "PID")
+	ensure("ParentProcessId", "ParentProcessId", "ParentPID")
+	ensure("IntegrityLevel", "TokenElevationType", "Integrity")
+	ensure("User", "SubjectUserName", "User", "AccountName")
+	ensure("LogonId", "SubjectLogonId", "LogonId")
 
-	// Registry Mappings
-	ensure("TargetObject", "Path")
-	// ensure("Details", "ValueName") // Context dependent
+	// Registry (Sysmon 12/13/14)
+	ensure("TargetObject", "Path", "KeyPath", "Object")
+	ensure("Details", "Value", "Data", "Details")
 
-	// 2. Evaluate
-	for _, ar := range e.Rules {
-		// Basic filter: EventID check inside the rule?
-		// sigma-go evaluator handles the logsource matching automatically if fields are present
-		// But we might want to skip non-matching log sources for performance?
-		// sigma-go does this check.
+	// File Activity (Sysmon 11/23/26)
+	ensure("TargetFilename", "Path", "Destination")
 
-		// Check category match if possible (e.g. process_creation -> 4688)
-		// We rely on the rule's selection logic.
+	// Network
+	ensure("SourceIp", "LocalIP", "Source")
+	ensure("DestinationIp", "RemoteIP", "Destination")
+	ensure("SourcePort", "LocalPort")
+	ensure("DestinationPort", "RemotePort")
+	ensure("Protocol", "Protocol")
 
-		result, err := ar.Evaluator.Matches(context.Background(), obj)
-		if err == nil && result.Match {
-			return &ar
+	// 2. Identify Category to filter rules
+	cat := ""
+	eid := fmt.Sprintf("%v", obj["EventID"])
+	switch eid {
+	case "4688", "1":
+		cat = "process_creation"
+	case "4624", "4625", "2":
+		cat = "network_connection" // simplification
+	case "4663", "11", "23", "26":
+		cat = "file_event"
+	case "12", "13", "14":
+		cat = "registry_event"
+	}
+
+	// Also check artifact type
+	if cat == "" {
+		switch ev.Artifact {
+		case "Registry":
+			cat = "registry_event"
+		case "Prefetch":
+			cat = "process_creation"
 		}
 	}
 
-	return nil
+	// 3. Evaluate matching rules
+	evaluate := func(indices []int) *ActiveRule {
+		for _, idx := range indices {
+			ar := e.Rules[idx]
+			result, err := ar.Evaluator.Matches(context.Background(), obj)
+			if err == nil && result.Match {
+				return &ar
+			}
+		}
+		return nil
+	}
+
+	// First check categorical rules
+	if cat != "" {
+		if matched := evaluate(e.RulesByCat[cat]); matched != nil {
+			return matched
+		}
+	}
+
+	// Then check global/uncategorized rules
+	return evaluate(e.GlobalRules)
 }

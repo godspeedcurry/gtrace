@@ -104,7 +104,11 @@ func (p *ShimCacheParser) Parse(ctx context.Context, in pluginsdk.ParseRequest) 
 				SourcePath: in.EvidencePath,
 			},
 		}
-		events = append(events, evt)
+		if in.StreamCallback != nil {
+			in.StreamCallback(evt)
+		} else {
+			events = append(events, evt)
+		}
 	}
 
 	return &pluginsdk.ParseResponse{

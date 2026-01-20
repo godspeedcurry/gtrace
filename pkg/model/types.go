@@ -77,4 +77,5 @@ type TimelineFilter struct {
 	Page       int
 	PageSize   int
 	Source     string
+	Level      string
 }

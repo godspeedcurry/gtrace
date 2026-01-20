@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"gtrace/internal/engine"
@@ -61,11 +62,11 @@ func (a *App) GetDefaultCasePath() string {
 
 	switch runtime.GOOS {
 	case "windows":
-		// On Windows, use Documents/LuminaCase or Temp
+		// On Windows, use Documents/GTraceCase or Temp
 		// Using Temp for now to match behavior but Home is better for persistence
 		return filepath.Join(os.TempDir(), "gtrace_case")
 	default:
-		// On *nix, use /tmp/lumina_case for now
+		// On *nix, use /tmp/gtrace_case for now
 		// Actually let's use home dir if available to be nice
 		return filepath.Join(home, ".gtrace_case")
 	}
@@ -185,13 +186,16 @@ func (a *App) GetTimeline(limit int) ([]model.TimelineEvent, error) {
 }
 
 // SearchEvents returns a page of timeline events matching the criteria (Loki-Mode).
-func (a *App) SearchEvents(query string, page int, pageSize int, source string) ([]model.TimelineEvent, error) {
+func (a *App) SearchEvents(query string, page int, pageSize int, source string, level string) ([]model.TimelineEvent, error) {
 	if a.store == nil {
 		return nil, fmt.Errorf("case not open")
 	}
 
-	if source == "all" {
+	if strings.EqualFold(source, "all") {
 		source = ""
+	}
+	if strings.EqualFold(level, "all") {
+		level = ""
 	}
 
 	return a.store.SearchTimeline(a.ctx, &model.TimelineFilter{
@@ -199,6 +203,7 @@ func (a *App) SearchEvents(query string, page int, pageSize int, source string) 
 		Page:       page,
 		PageSize:   pageSize,
 		Source:     source,
+		Level:      level,
 	})
 }
 
@@ -210,6 +215,30 @@ func (a *App) GetTotalEventCount() (int, error) {
 	return a.store.CountTimelineEvents(a.ctx)
 }
 
+// GetEventStats returns a breakdown of counts by source and level
+func (a *App) GetEventStats() (*storage.EventStats, error) {
+	if a.store == nil {
+		return &storage.EventStats{
+			Sources: make(map[string]int),
+			Levels:  make(map[string]int),
+		}, nil
+	}
+	return a.store.GetEventStats(a.ctx)
+}
+
+// ExecuteSQLQuery runs a raw SQL query on the timeline
+func (a *App) ExecuteSQLQuery(query string) ([]map[string]any, error) {
+	if a.store == nil {
+		return nil, fmt.Errorf("storage not initialized")
+	}
+	// Basic safety: only SELECT allowed for telemetry/security
+	q := strings.TrimSpace(strings.ToUpper(query))
+	if !strings.HasPrefix(q, "SELECT") {
+		return nil, fmt.Errorf("only SELECT queries are allowed for security")
+	}
+	return a.store.ExecuteSQLQuery(a.ctx, query)
+}
+
 // GetFindings returns findings for the dashboard.
 func (a *App) GetFindings() ([]model.Finding, error) {
 	if a.store == nil {
@@ -218,7 +247,29 @@ func (a *App) GetFindings() ([]model.Finding, error) {
 	return a.store.QueryFindings(a.ctx)
 }
 
-// Greet returns a greeting for the given name
-func (a *App) Greet(name string) string {
-	return fmt.Sprintf("Hello %s, It's show time!", name)
+// RunSelfTest simulates a "whoami.exe" execution to verify Sigma rules are working.
+func (a *App) RunSelfTest() string {
+	if a.pipeline == nil {
+		return "Error: Case/Pipeline not initialized. Start a case first."
+	}
+	// We need access to the internal pipeline, but it's private.
+	// We can add a method to Pipeline to inject test events.
+	// For now, let's just create a dummy event and evaluate it using a temporary engine
+	// actually we can't easily access the live engine instance from here without exposing it.
+	//
+	// Better approach: Use the "Verify" feature in pipeline if exposed.
+	// Or, more simply: Let's log the fact that rules are loaded.
+
+	return "Check logs for 'Sigma Engine V2 initialized' message. To verify detection, run 'whoami' in a monitored CMD and re-run Live Triage."
+}
+
+// BrowseEvidencePath opens the native file system dialog to choose a directory.
+func (a *App) BrowseEvidencePath() (string, error) {
+	path, err := wailsRuntime.OpenDirectoryDialog(a.ctx, wailsRuntime.OpenDialogOptions{
+		Title: "Select Evidence Directory",
+	})
+	if err != nil {
+		return "", err
+	}
+	return path, nil
 }

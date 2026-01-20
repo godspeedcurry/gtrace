@@ -1,3 +1,26 @@
+export namespace app {
+	
+	export class SystemInfo {
+	    hostname: string;
+	    os: string;
+	    arch: string;
+	    ip: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SystemInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.hostname = source["hostname"];
+	        this.os = source["os"];
+	        this.arch = source["arch"];
+	        this.ip = source["ip"];
+	    }
+	}
+
+}
+
 export namespace model {
 	
 	export class EvidenceRef {
@@ -127,6 +150,25 @@ export namespace model {
 		    }
 		    return a;
 		}
+	}
+
+}
+
+export namespace storage {
+	
+	export class EventStats {
+	    sources: Record<string, number>;
+	    levels: Record<string, number>;
+	
+	    static createFrom(source: any = {}) {
+	        return new EventStats(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.sources = source["sources"];
+	        this.levels = source["levels"];
+	    }
 	}
 
 }

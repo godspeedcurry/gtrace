@@ -1,8 +1,15 @@
 package plugin
 
 import (
+	"bytes"
+	"io"
+	"strings"
 	"time"
 	"unicode/utf16"
+	"unicode/utf8"
+
+	"golang.org/x/text/encoding/simplifiedchinese"
+	"golang.org/x/text/transform"
 )
 
 // cleanupUTF16 converts a byte slice (expected to be UTF-16-LE) to a Go string,
@@ -29,6 +36,32 @@ func cleanupUTF16(b []byte) string {
 		}
 	}
 	return string(runes)
+}
+
+// BytesToString tries to convert bytes to string using UTF-8 first,
+// and falls back to GB18030 (superset of GBK including rare characters) if invalid.
+func BytesToString(b []byte) string {
+	// 1. Try UTF-8
+	if utf8.Valid(b) {
+		return string(b)
+	}
+	// 2. Try GB18030
+	reader := transform.NewReader(bytes.NewReader(b), simplifiedchinese.GB18030.NewDecoder())
+	d, err := io.ReadAll(reader)
+	if err == nil {
+		return string(d)
+	}
+	// 3. Last result: raw string (garbage)
+	return string(b)
+}
+
+// CleanString cleans up a string that might be garbage or GBK encoded but already cast to string.
+// If the string contains Replacement Characters (indicating failed UTF-8 decode), it might mean
+// it was originally GBK bytes interpreted as UTF-8. However, recovering that is hard if we don't have original bytes.
+// Best use BytesToString when we have raw bytes.
+// This function trims nulls and spaces.
+func CleanString(s string) string {
+	return strings.TrimSpace(strings.Trim(s, "\x00"))
 }
 
 // windowsFiletimeToGo converts a Windows FILETIME (uint64) to a Go time.Time.

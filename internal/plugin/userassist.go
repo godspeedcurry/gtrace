@@ -134,7 +134,19 @@ func (p *UserAssistParser) Parse(ctx context.Context, in pluginsdk.ParseRequest)
 }
 
 // rot13 decodes UserAssist ROT13 paths
+
+// rot13 decodes UserAssist ROT13 paths.
+// NOTE: UserAssist paths might be GBK encoded if coming from a legacy system region settings?
+// But usually they are UTF-16 in registry. The regparser returns string.
+// If the original registry value was GBK-bytes-as-string, we might need to fix it.
+// However, typically UserAssist is wide-string.
+// The issue might be that the rot13 function operates on runes, but if the string is garbled input...
+//
+// Actually, simple ROT13 is for [a-zA-Z].
 func rot13(input string) string {
+	// Try cleaning it first just in case
+	input = CleanString(input)
+
 	var result strings.Builder
 	for _, r := range input {
 		switch {

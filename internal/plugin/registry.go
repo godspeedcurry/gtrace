@@ -24,7 +24,6 @@ func NewDefaultRegistry() *Registry {
 			&UserAssistParser{},
 			&JumplistParser{},
 			&TaskXMLParser{},
-			&TaskXMLParser{},
 			&EvtxParser{},
 			&SAMParser{},
 		},

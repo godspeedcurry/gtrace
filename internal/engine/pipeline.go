@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"gtrace/internal/analysis"
+	"gtrace/internal/plugin"
 	"gtrace/internal/rules"
 	"gtrace/internal/storage"
 	"gtrace/pkg/model"
@@ -40,8 +41,8 @@ func NewPipeline(store storage.Storage, parsers []pluginsdk.ParserPlugin, analyz
 }
 
 func cleanupOrphanedDumps(logger func(string, ...interface{})) {
-	// Look for files matching lumina_dump_*.hve in TempDir
-	pattern := filepath.Join(os.TempDir(), "lumina_dump_*.hve")
+	// Look for files matching gtrace_dump_*.hve in TempDir
+	pattern := filepath.Join(os.TempDir(), "gtrace_dump_*.hve")
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
 		return
@@ -110,6 +111,7 @@ func (p *Pipeline) TriageLive(ctx context.Context, components []string, options 
 		p.log("Warning: Live Triage on non-Windows system; paths may not exist.")
 	}
 
+	p.log("TriageLive started. Components requested: %v", components)
 	// Helper to check if component is enabled
 	isEnabled := func(name string) bool {
 		// If components slice is nil, we assume ALL are enabled (legacy/default behavior)
@@ -128,10 +130,12 @@ func (p *Pipeline) TriageLive(ctx context.Context, components []string, options 
 	var searchPaths []string
 
 	if isEnabled("Prefetch") {
+		p.log("  [+] Prefetch component selected")
 		searchPaths = append(searchPaths, `C:\Windows\Prefetch`)
 	}
 
 	if isEnabled("Registry") {
+		p.log("  [+] Registry component selected")
 		searchPaths = append(searchPaths,
 			`C:\Windows\System32\config\SYSTEM`,
 			`C:\Windows\System32\config\SOFTWARE`,
@@ -143,6 +147,7 @@ func (p *Pipeline) TriageLive(ctx context.Context, components []string, options 
 		// User Profiles: NTUSER.DAT
 		userProfiles, _ := filepath.Glob(`C:\Users\*\NTUSER.DAT`)
 		if len(userProfiles) > 0 {
+			p.log("  [+] Found %d NTUSER.DAT hives", len(userProfiles))
 			searchPaths = append(searchPaths, userProfiles...)
 		}
 
@@ -151,10 +156,12 @@ func (p *Pipeline) TriageLive(ctx context.Context, components []string, options 
 	}
 
 	if isEnabled("Tasks") {
+		p.log("  [+] Tasks component selected")
 		searchPaths = append(searchPaths, `C:\Windows\System32\Tasks`)
 	}
 
 	if isEnabled("EventLogs") {
+		p.log("  [+] EventLogs component selected")
 		searchPaths = append(searchPaths,
 			`C:\Windows\System32\winevt\Logs\Security.evtx`,
 			`C:\Windows\System32\winevt\Logs\System.evtx`,
@@ -163,6 +170,7 @@ func (p *Pipeline) TriageLive(ctx context.Context, components []string, options 
 		)
 	}
 
+	// ...
 	if isEnabled("JumpLists") {
 		jumpLists, _ := filepath.Glob(`C:\Users\*\AppData\Roaming\Microsoft\Windows\Recent\AutomaticDestinations\*.automaticDestinations-ms`)
 		if len(jumpLists) > 0 {
@@ -170,12 +178,24 @@ func (p *Pipeline) TriageLive(ctx context.Context, components []string, options 
 		}
 	}
 
+	// Virtual Artifacts
+	if isEnabled("Network") {
+		searchPaths = append(searchPaths, "LIVE_NETWORK")
+	}
+	if isEnabled("WMI") {
+		searchPaths = append(searchPaths, "LIVE_WMI")
+	}
+	if isEnabled("Browser") {
+		searchPaths = append(searchPaths, "LIVE_BROWSER")
+	}
+
 	var candidates []string
 	for _, sp := range searchPaths {
-		if sp == "LIVE_HKCU" {
+		if sp == "LIVE_HKCU" || sp == "LIVE_NETWORK" || sp == "LIVE_WMI" || sp == "LIVE_BROWSER" {
 			candidates = append(candidates, sp)
 			continue
 		}
+		// ...
 
 		p.log("Checking live artifact path: %s", sp)
 		info, err := os.Stat(sp)
@@ -250,6 +270,11 @@ func (p *Pipeline) runTriage(ctx context.Context, candidates []string, options m
 
 	go func() {
 		defer close(writeErrChan)
+		defer func() {
+			if r := recover(); r != nil {
+				p.log("CRITICAL: Panic in Timeline Writer: %v", r)
+			}
+		}()
 
 		// Create efficient buffered writer for timeline
 		writeEvent, closeEvents, err := p.store.NewStreamWriter("timeline.jsonl")
@@ -262,35 +287,68 @@ func (p *Pipeline) runTriage(ctx context.Context, candidates []string, options m
 		}
 		defer closeEvents()
 
-		// Loop with global limit
+		// Counters for balanced collection
 		writtenCount := 0
+		bulkCounts := make(map[string]int) // Track EventLog, Registry, Prefetch separately
+		bulkLimit := globalMaxEvents
+
 		for ev := range eventsChan {
-			if writtenCount >= globalMaxEvents {
-				// Drain remaining events without writing
-				continue
+			// 1. Identify category for fairness
+			cat := "Other"
+			if strings.EqualFold(ev.Source, "EventLog") {
+				cat = "EventLog"
+			} else if strings.EqualFold(ev.Source, "Registry") || strings.EqualFold(ev.Artifact, "Registry") {
+				cat = "Registry"
+			} else if strings.EqualFold(ev.Artifact, "Prefetch") || strings.EqualFold(ev.Source, "Prefetch") {
+				cat = "Prefetch"
 			}
 
-			// Run Sigma Checks (if engine loaded)
-			if sigmaEng != nil {
+			// 2. Apply Limits
+			isBulk := (cat == "EventLog" || cat == "Registry" || cat == "Prefetch")
+			if isBulk {
+				// Global Cap
+				if writtenCount >= bulkLimit {
+					continue
+				}
+				// Fairness Cap: One category shouldn't take > 60% of total budget
+				// if there are multiple candidates. This prevents EVTX from drowning out Registry/Prefetch.
+				if bulkCounts[cat] >= (bulkLimit * 6 / 10) {
+					continue
+				}
+			}
+
+			// Run Sigma Checks (Only for EventLogs and Registry to save time and prevent panics)
+			// ...
+			// (Keep existing Sigma logic)
+			if sigmaEng != nil && (cat == "EventLog" || cat == "Registry") {
 				if matched := sigmaEng.Evaluate(ev); matched != nil {
+					if ev.Details == nil {
+						ev.Details = make(map[string]string)
+					}
 					// Mark the event
-					ev.Details["_Alert"] = matched.Rule.Title
-					ev.Details["_AlertLevel"] = matched.Rule.Level
-					ev.Details["_AlertRuleID"] = matched.Rule.ID
+					ev.Details["_Alert"] = matched.Title
+					ev.Details["_AlertLevel"] = matched.Level
+					ev.Details["_AlertRuleID"] = matched.ID
+					ev.Details["_AlertDescription"] = matched.Description
 					// Add MITRE ATT&CK tags if available
-					if len(matched.Rule.Tags) > 0 {
-						ev.Details["_Mitre"] = matched.Rule.Tags[0]
+					if len(matched.Tags) > 0 {
+						ev.Details["_Mitre"] = strings.Join(matched.Tags, ", ")
 					}
 				}
 			}
 
 			if err := writeEvent(ev); err != nil {
 				p.log("Error writing event: %v", err)
-				// continue best effort
 			}
 			writtenCount++
+			if isBulk {
+				bulkCounts[cat]++
+			}
+			if writtenCount%500 == 0 {
+				p.log("Pipeline Progress: Written %d events...", writtenCount)
+			}
 		}
-		p.log("Pipeline: Total events written = %d (limit was %d)", writtenCount, globalMaxEvents)
+		p.log("Pipeline: Finalizing. Total events written = %d (limit was %d)", writtenCount, globalMaxEvents)
 		writeErrChan <- nil
 	}()
 
@@ -302,6 +360,7 @@ func (p *Pipeline) runTriage(ctx context.Context, candidates []string, options m
 			for file := range jobs {
 				var resp *pluginsdk.ParseResponse
 				var err error
+				p.log("[W%d] Processing %s...", workerID, file)
 				func() {
 					defer func() {
 						if r := recover(); r != nil {
@@ -340,8 +399,12 @@ func (p *Pipeline) runTriage(ctx context.Context, candidates []string, options m
 		for resp := range responseChan {
 			processed++
 			if resp != nil {
-				// Events are already handled via streamCb!
-				// Only handle artifacts here
+				// 1. Handle events that were NOT streamed (legacy/bulk plugins)
+				for _, ev := range resp.Events {
+					eventsChan <- ev
+				}
+
+				// 2. Handle artifacts
 				if len(resp.Artifacts) > 0 {
 					artifactBatch = append(artifactBatch, resp.Artifacts...)
 				}
@@ -387,9 +450,39 @@ func (p *Pipeline) processFile(ctx context.Context, file string, options map[str
 
 	// Pre-processing for Windows Live Artifacts (Registry Dumping)
 	if runtime.GOOS == "windows" {
+		// Virtual Artifact: Network (Command Based)
+		if file == "LIVE_NETWORK" {
+			if streamCb != nil {
+				// We need to adapt the callback: CollectNetwork expects func(model.TimelineEvent)
+				// streamCb is already func(model.TimelineEvent)
+				if err := plugin.CollectNetwork(ctx, streamCb); err != nil {
+					p.log("Error collecting Network info: %v", err)
+				}
+			}
+			return &pluginsdk.ParseResponse{}, nil
+		}
+		// Virtual Artifact: WMI (COM Based)
+		if file == "LIVE_WMI" {
+			if streamCb != nil {
+				if err := plugin.CollectWMIPersistence(ctx, streamCb); err != nil {
+					p.log("Error collecting WMI persistence: %v", err)
+				}
+			}
+			return &pluginsdk.ParseResponse{}, nil
+		}
+		// Virtual Artifact: Browser History (SQLite)
+		if file == "LIVE_BROWSER" {
+			if streamCb != nil {
+				if err := plugin.CollectBrowserHistory(ctx, streamCb); err != nil {
+					p.log("Error collecting Browser History: %v", err)
+				}
+			}
+			return &pluginsdk.ParseResponse{}, nil
+		}
+
 		// Case 1: Special Virtual Artifact for Current User
 		if file == "LIVE_HKCU" {
-			dumpPath := filepath.Join(os.TempDir(), fmt.Sprintf("lumina_dump_HKCU_%d.hve", time.Now().UnixNano()))
+			dumpPath := filepath.Join(os.TempDir(), fmt.Sprintf("gtrace_dump_HKCU_%d.hve", time.Now().UnixNano()))
 			if err := performRegSave("HKEY_CURRENT_USER", dumpPath); err != nil {
 				p.log("Failed to dump HKCU: %v", err)
 				return nil, nil
@@ -404,7 +497,7 @@ func (p *Pipeline) processFile(ctx context.Context, file string, options map[str
 			if isHive {
 				// Sanitize hive name for filename (HKLM\SYSTEM -> HKLM_SYSTEM)
 				safeName := strings.ReplaceAll(hiveKey, "\\", "_")
-				dumpPath := filepath.Join(os.TempDir(), fmt.Sprintf("lumina_dump_%s_%d.hve", safeName, time.Now().UnixNano()))
+				dumpPath := filepath.Join(os.TempDir(), fmt.Sprintf("gtrace_dump_%s_%d.hve", safeName, time.Now().UnixNano()))
 
 				if err := performRegSave(hiveKey, dumpPath); err != nil {
 					p.log("Failed to dump hive %s: %v", hiveKey, err)
@@ -415,8 +508,39 @@ func (p *Pipeline) processFile(ctx context.Context, file string, options map[str
 					tempFile = dumpPath
 				}
 			} else {
-				// Case 3: Regular Files (including unlocked NTUSER.DAT)
-				targetFile = file
+				// Case 3: Regular Files (including unlocked NTUSER.DAT, and LOCKED .evtx/.pf)
+				ext := strings.ToLower(filepath.Ext(file))
+				if ext == ".evtx" || ext == ".pf" || ext == ".dat" {
+					// We suspect these might be locked. Try to copy.
+					dumpPath := filepath.Join(os.TempDir(), fmt.Sprintf("gtrace_dump_file_%d%s", time.Now().UnixNano(), filepath.Ext(file)))
+
+					// Try copy
+					errCopy := copyLockedFile(file, dumpPath)
+
+					// Verify copy success
+					validCopy := false
+					if errCopy == nil {
+						if info, errStat := os.Stat(dumpPath); errStat == nil && info.Size() > 0 {
+							validCopy = true
+						} else {
+							// Copy said ok, but file is missing or empty
+							p.log("Copy locked file apparent success but produced empty/missing file: %s (Orig: %s)", dumpPath, file)
+						}
+					} else {
+						// This is expected for locked files sometimes
+						p.log("Warning: Failed to copy locked file %s (Reason: %v). Will attempt direct read.", file, errCopy)
+					}
+
+					if validCopy {
+						targetFile = dumpPath
+						tempFile = dumpPath
+					} else {
+						// Fallback to direct read
+						targetFile = file
+					}
+				} else {
+					targetFile = file
+				}
 			}
 		}
 	} else {
@@ -449,20 +573,24 @@ func (p *Pipeline) processFile(ctx context.Context, file string, options map[str
 
 	// Convert options to string map for Metadata
 	meta := make(map[string]string)
-	if options != nil {
-		for k, v := range options {
-			meta[k] = fmt.Sprintf("%v", v)
-		}
+	for k, v := range options {
+		meta[k] = fmt.Sprintf("%v", v)
 	}
 
 	// Wrap callback to fixup source paths if needed
 	var wrappedCb func(model.TimelineEvent)
 	if streamCb != nil {
 		wrappedCb = func(ev model.TimelineEvent) {
+			// Always try to fixup Artifact if it looks like a dump file
+			if strings.Contains(ev.Artifact, "gtrace_dump_file_") || (tempFile != "" && ev.Artifact == filepath.Base(targetFile)) {
+				ev.Artifact = filepath.Base(file)
+			}
+
 			if tempFile != "" {
 				ev.EvidenceRef.SourcePath = file
-				if ev.Source == "File" { // Default source? Registry usually sets "Registry"
-					ev.Source = "Registry"
+				// Fix Source if it's missing or generic
+				if ev.Source == "File" || ev.Source == "" {
+					ev.Source = inferSource(file)
 				}
 			}
 			streamCb(ev)
@@ -490,20 +618,19 @@ func (p *Pipeline) processFile(ctx context.Context, file string, options map[str
 		return nil, err
 	}
 
-	// Fixup Source in events to point into original file if we used a temp file
-	// Only if not streamed (legacy plugins)
-	if tempFile != "" && resp != nil && len(resp.Events) > 0 {
+	// Fixup Artifacts SourcePaths and Artifact names if we used a temp file
+	if tempFile != "" && resp != nil {
+		for i := range resp.Artifacts {
+			resp.Artifacts[i].EvidenceRef.SourcePath = file
+		}
 		for i := range resp.Events {
-			resp.Events[i].Source = "Registry" // Generic tag or specific?
-		}
-		// Fix Artifacts
-		for i := range resp.Artifacts {
-			resp.Artifacts[i].EvidenceRef.SourcePath = file
-		}
-	} else if tempFile != "" && resp != nil && len(resp.Artifacts) > 0 {
-		// Even if events streamed, artifacts are returned in resp
-		for i := range resp.Artifacts {
-			resp.Artifacts[i].EvidenceRef.SourcePath = file
+			resp.Events[i].EvidenceRef.SourcePath = file
+			if strings.Contains(resp.Events[i].Artifact, "gtrace_dump_file_") || (tempFile != "" && resp.Events[i].Artifact == filepath.Base(targetFile)) {
+				resp.Events[i].Artifact = filepath.Base(file)
+			}
+			if resp.Events[i].Source == "File" || resp.Events[i].Source == "" {
+				resp.Events[i].Source = inferSource(file)
+			}
 		}
 	}
 
@@ -554,6 +681,26 @@ func (p *Pipeline) findParserFor(path string, header []byte) pluginsdk.ParserPlu
 		}
 	}
 	return nil
+}
+
+func inferSource(path string) string {
+	ext := strings.ToLower(filepath.Ext(path))
+	base := strings.ToUpper(filepath.Base(path))
+
+	switch {
+	case ext == ".evtx":
+		return "EventLog"
+	case ext == ".pf":
+		return "Prefetch"
+	case base == "AMCACHE.HVE":
+		return "Amcache"
+	case base == "SYSTEM" || base == "SOFTWARE" || base == "SAM" || base == "SECURITY" || base == "NTUSER.DAT":
+		return "Registry"
+	case strings.Contains(path, "Tasks"):
+		return "Tasks"
+	default:
+		return "File"
+	}
 }
 
 // Analyze applies analyzer plugins on stored timeline and produces findings.

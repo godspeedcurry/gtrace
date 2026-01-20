@@ -51,6 +51,8 @@ func (p *PrefetchParser) CanParse(filename string, header []byte) bool {
 }
 
 func (p *PrefetchParser) Parse(ctx context.Context, in pluginsdk.ParseRequest) (*pluginsdk.ParseResponse, error) {
+	// Added debug logging
+	// fmt.Printf("DEBUG: Prefetch Parser attempting %s\n", in.EvidencePath)
 	f, err := os.Open(in.EvidencePath)
 	if err != nil {
 		return nil, err
@@ -60,7 +62,7 @@ func (p *PrefetchParser) Parse(ctx context.Context, in pluginsdk.ParseRequest) (
 	// Use Velocidex Go-Prefetch library
 	pfInfo, err := prefetch.LoadPrefetch(f)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse prefetch: %w", err)
+		return nil, fmt.Errorf("failed to parse prefetch %s: %w", in.EvidencePath, err)
 	}
 
 	// Create Event
@@ -75,8 +77,8 @@ func (p *PrefetchParser) Parse(ctx context.Context, in pluginsdk.ParseRequest) (
 	evt := model.TimelineEvent{
 		ID:        fmt.Sprintf("pf-%s-%d", pfInfo.Executable, eventTime.UnixNano()),
 		EventTime: eventTime,
-		Source:    "prefetch",
-		Artifact:  "prefetch",
+		Source:    "Prefetch",
+		Artifact:  "Prefetch",
 		Action:    "EXECUTION",
 		Subject:   pfInfo.Executable,
 		Details: map[string]string{
@@ -89,6 +91,11 @@ func (p *PrefetchParser) Parse(ctx context.Context, in pluginsdk.ParseRequest) (
 		EvidenceRef: model.EvidenceRef{
 			SourcePath: in.EvidencePath,
 		},
+	}
+
+	if in.StreamCallback != nil {
+		in.StreamCallback(evt)
+		return &pluginsdk.ParseResponse{}, nil
 	}
 
 	return &pluginsdk.ParseResponse{

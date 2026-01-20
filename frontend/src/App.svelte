@@ -117,9 +117,9 @@
     .modal-backdrop {
         position: fixed;
         top: 0; left: 0; right: 0; bottom: 0;
-        background: rgba(0, 0, 0, 0.7);
-        backdrop-filter: blur(4px);
-        z-index: 100;
+        background: rgba(2, 6, 23, 0.85);
+        backdrop-filter: blur(8px);
+        z-index: 1000;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -127,57 +127,91 @@
     }
 
     .modal-panel {
-        background: #0f172a;
+        background: #0b1120;
         width: 100%;
-        max-width: 800px;
-        max-height: 90vh;
-        border-radius: 16px;
-        border: 1px solid #334155;
-        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        max-width: 900px;
+        max-height: 85vh;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        box-shadow: 0 0 50px rgba(0, 0, 0, 0.6), 0 0 2px rgba(56, 189, 248, 0.2);
         display: flex;
         flex-direction: column;
         overflow: hidden;
     }
 
     .modal-header {
-        padding: 24px;
-        border-bottom: 1px solid #1e293b;
+        padding: 16px 24px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
         display: flex;
         justify-content: space-between;
         align-items: center;
-        background: #151b27;
+        background: #0f172a;
     }
 
-    .modal-header h2 { margin: 0; font-size: 1.25rem; }
-    .close-btn { 
-        background: none; border: none; color: #94a3b8; font-size: 2rem; cursor: pointer; padding: 0; line-height: 1;
+    .modal-header h2 { 
+        margin: 0; 
+        font-size: 0.95rem; 
+        text-transform: uppercase; 
+        letter-spacing: 0.1em; 
+        color: #94a3b8;
+        font-weight: 800;
     }
-    .close-btn:hover { color: white; }
+    .close-btn { 
+        background: rgba(255,255,255,0.03); 
+        border: 1px solid rgba(255,255,255,0.05); 
+        color: #64748b; 
+        font-size: 1.2rem; 
+        cursor: pointer; 
+        width: 32px; height: 32px;
+        border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        transition: all 0.2s;
+    }
+    .close-btn:hover { color: #f1f5f9; background: #ef4444; border-color: #ef4444; }
 
     .event-meta {
         display: grid;
         grid-template-columns: repeat(3, 1fr);
-        gap: 16px;
+        gap: 24px;
         padding: 24px;
-        background: #1e293b;
+        background: rgba(15, 23, 42, 0.5);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
     }
 
-    .meta-item label { display: block; font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; font-weight: 700; margin-bottom: 4px; }
-    .meta-item span { font-size: 0.95rem; color: white; }
-    .meta-item span.hl { color: #38bdf8; font-weight: 600; }
+    .meta-item label { 
+        display: block; 
+        font-size: 0.65rem; 
+        color: #64748b; 
+        text-transform: uppercase; 
+        font-weight: 800; 
+        margin-bottom: 6px; 
+    }
+    .meta-item span { 
+        font-size: 0.85rem; 
+        color: #f1f5f9; 
+        font-family: 'JetBrains Mono', monospace; 
+    }
+    .meta-item span.hl { color: #38bdf8; font-weight: 700; text-shadow: 0 0 8px rgba(56, 189, 248, 0.3); }
 
     .json-viewer {
         flex: 1;
         overflow: auto;
         padding: 24px;
         background: #020617;
+        border: 1px solid rgba(255, 255, 255, 0.02);
+        margin: 12px;
+        border-radius: 8px;
     }
 
     pre {
         margin: 0;
         font-family: 'JetBrains Mono', monospace;
-        font-size: 0.85rem;
-        color: #a5b4fc;
-        line-height: 1.5;
+        font-size: 0.82rem;
+        color: #94a3b8;
+        line-height: 1.6;
     }
+
+    :global(.json-key) { color: #818cf8; }
+    :global(.json-string) { color: #34d399; }
+    :global(.json-number) { color: #fbbf24; }
 </style>

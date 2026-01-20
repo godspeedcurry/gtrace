@@ -1,11 +1,11 @@
 ---
 name: Wails Release Management
-description: Standard procedure for releasing the Lumina Wails application, including pre-release checks and tag management.
+description: Standard procedure for releasing the GTrace Wails application, including pre-release checks and tag management.
 ---
 
 # Wails Release Management
 
-This skill provides a checklist and commands for releasing the Lumina Wails application.
+This skill provides a checklist and commands for releasing the GTrace Wails application.
 
 ## 1. Pre-Release Checks
 GoReleaser requires a clean git state.
