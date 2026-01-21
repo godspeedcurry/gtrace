@@ -1,5 +1,5 @@
 <script>
-    import { timeline, selectedEvent } from '../stores.js';
+    import { timeline, selectedEvent, currentView } from '../stores.js';
     import { onMount, onDestroy } from 'svelte';
     import { GetTotalEventCount, SearchEvents, GetEventStats, ExecuteSQLQuery } from '../../wailsjs/go/app/App.js';
     import CodeMirror from "svelte-codemirror-editor";
@@ -339,7 +339,7 @@
             <div style="max-width: 400px; text-align: center; line-height: 1.5;">
                 No case is currently active. Go to the <strong>Dashboard</strong> to start a new Live Triage or load an offline case.
             </div>
-            <a href="#/dashboard" style="color: #38bdf8; text-decoration: none; border: 1px solid #38bdf8; padding: 8px 16px; border-radius: 6px; font-size: 0.9rem; margin-top: 8px;">Go to Dashboard</a>
+            <button on:click={() => currentView.set('dashboard')} style="background: transparent; cursor: pointer; color: #38bdf8; text-decoration: none; border: 1px solid #38bdf8; padding: 8px 16px; border-radius: 6px; font-size: 0.9rem; margin-top: 8px;">Go to Dashboard</button>
         </div>
     {:else if lastError}
         <div class="error-banner" style="background: #451a1a; color: #fca5a5; padding: 12px 24px; font-size: 0.9rem; border-bottom: 1px solid #7f1d1d; display: flex; align-items: center; gap: 12px;">
@@ -834,17 +834,20 @@
     th:last-child { border-right: none; }
 
     td {
-        padding: 8px 16px;
+        padding: 6px 12px;
+        color: #94a3b8;
+        font-size: 0.85rem;
         border-bottom: 1px solid #1e293b;
-        border-right: 1px solid #1e293b; /* Visible separator */
-        color: #cbd5e1;
+        border-right: 1px solid rgba(255, 255, 255, 0.03); /* Added vertical divider */
         vertical-align: middle;
-        white-space: nowrap; /* Prevent wrapping */
-        text-align: left; /* Force left alignment */
-        /* Removed overflow hidden/ellipsis to allow full text viewing via scroll */
-        user-select: text;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        height: 36px;
     }
-    td:last-child { border-right: none; }
+    td:last-child {
+        border-right: none;
+    }
 
     tr { cursor: pointer; transition: background 0.1s; }
     tr:hover { background: rgba(56, 189, 248, 0.05); }

@@ -16,7 +16,7 @@
         EventsOn("triage:progress", (data) => {
              // { current: 1, total: 10, percent: 10 }
              progress = data.percent;
-             progressLabel = `${data.percent}%`;
+             progressLabel = `${Math.round(data.percent)}%`;
         });
 
         // Only fetch system info in Live mode ideally, but it's cheap so fetch always
